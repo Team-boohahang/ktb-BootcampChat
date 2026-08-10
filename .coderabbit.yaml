@@ -189,9 +189,11 @@ reviews:
   auto_review:
     enabled: true
 
-    # PR 생성 시 전체 리뷰 후
-    # push마다 리뷰를 다시 돌리지 않음
-    auto_incremental_review: false
+    # PR 생성 시 전체 리뷰 후 동일 PR에 push된 변경분을 재리뷰
+    auto_incremental_review: true
+
+    # 반복 push 중 자동 리뷰가 일시정지되지 않도록 설정
+    auto_pause_after_reviewed_commits: 0
 
     drafts: false
 

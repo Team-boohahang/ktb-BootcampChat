@@ -24,7 +24,6 @@ class ConnectionLoginHandlerTest {
     @Mock private ConnectedUsers connectedUsers;
     @Mock private UserRooms userRooms;
     @Mock private RoomJoinHandler roomJoinHandler;
-    @Mock private RoomLeaveHandler roomLeaveHandler;
     @Mock private SocketIOClient client;
 
     private ConnectionLoginHandler handler;
@@ -36,7 +35,6 @@ class ConnectionLoginHandlerTest {
                 connectedUsers,
                 userRooms,
                 roomJoinHandler,
-                roomLeaveHandler,
                 new SimpleMeterRegistry());
     }
 
@@ -57,7 +55,7 @@ class ConnectionLoginHandlerTest {
     }
 
     @Test
-    void onDisconnect_removesCurrentConnectionAndLeavesRooms() {
+    void onDisconnect_removesCurrentConnectionAndClearsRooms() {
         UUID socketId = UUID.randomUUID();
         SocketUser user = new SocketUser("user-1", "tester", "session-1", socketId.toString());
         when(client.get("user")).thenReturn(user);
@@ -67,10 +65,10 @@ class ConnectionLoginHandlerTest {
 
         handler.onDisconnect(client);
 
-        verify(roomLeaveHandler).handleLeaveRoom(client, "room-1");
+        verify(client).leaveRoom("room-1");
+        verify(userRooms).clear(user.id());
         verify(connectedUsers).del(user.id());
         verify(client).leaveRooms(Set.of("user:" + user.id(), "room-list"));
         verify(client).del("user");
-        verify(client).disconnect();
     }
 }
