@@ -1,134 +1,123 @@
 package com.ktb.chatapp.service;
 
 import com.ktb.chatapp.config.MongoTestContainer;
-import com.ktb.chatapp.repository.RateLimitRepository;
+import com.ktb.chatapp.config.RedisTestContainer;
 import java.time.Duration;
-import java.time.Instant;
+import java.util.ArrayList;
+import java.util.List;
+import java.util.concurrent.Callable;
+import java.util.concurrent.Executors;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.context.annotation.Import;
+import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.test.context.TestPropertySource;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
 @SpringBootTest
-@Import(MongoTestContainer.class)
-@TestPropertySource(properties = {
-        "socketio.enabled=false"
-})
-@DisplayName("RateLimitService 통합 테스트")
+@Import({RedisTestContainer.class, MongoTestContainer.class})
+@TestPropertySource(properties = "socketio.enabled=false")
+@DisplayName("Redis RateLimitService 통합 테스트")
 class RateLimitServiceTest {
 
     @Autowired
-    private RateLimitRepository rateLimitRepository;
+    private StringRedisTemplate redisTemplate;
 
     @Autowired
     private RateLimitService rateLimitService;
 
     @BeforeEach
     void setUp() {
-        rateLimitRepository.deleteAll();
+        var keys = redisTemplate.keys("ratelimit:*");
+        if (keys != null && !keys.isEmpty()) {
+            redisTemplate.delete(keys);
+        }
     }
 
     @Test
-    @DisplayName("최초 요청은 허용되고 TTL과 남은 횟수가 갱신된다")
-    void checkRateLimit_AllowsFirstRequest() {
-        int maxRequests = 5;
-        Duration window = Duration.ofSeconds(60);
-        String clientId = "ip:127.0.0.1";
-
-        long beforeCall = Instant.now().getEpochSecond();
-        RateLimitCheckResult result =
-                rateLimitService.checkRateLimit(clientId, maxRequests, window);
-        long afterCall = Instant.now().getEpochSecond();
+    @DisplayName("사용자 key에 첫 요청과 TTL을 저장한다")
+    void checkRateLimit_CreatesExpectedUserKey() {
+        RateLimitCheckResult result = rateLimitService.checkRateLimit(
+                "user:user-1", 5, Duration.ofSeconds(60));
 
         assertThat(result.allowed()).isTrue();
-        assertThat(result.limit()).isEqualTo(maxRequests);
-        assertThat(result.remaining()).isEqualTo(maxRequests - 1);
-        assertThat(result.windowSeconds()).isEqualTo(window.getSeconds());
-        assertThat(result.retryAfterSeconds()).isPositive();
-        assertThat(result.resetEpochSeconds())
-                .isBetween(beforeCall + result.retryAfterSeconds(), afterCall + result.retryAfterSeconds());
+        assertThat(result.remaining()).isEqualTo(4);
+        assertThat(redisTemplate.opsForValue().get("ratelimit:user:user-1")).isEqualTo("1");
+        assertThat(redisTemplate.getExpire("ratelimit:user:user-1")).isBetween(1L, 60L);
     }
 
     @Test
-    @DisplayName("요청 한도를 초과하면 차단된다")
-    void checkRateLimit_DeniesWhenLimitExceeded() {
-        int maxRequests = 5;
-        Duration window = Duration.ofSeconds(60);
-        String clientId = "ip:127.0.0.1";
-
-        // 한도까지 요청을 수행
-        for (int i = 0; i < maxRequests; i++) {
-            RateLimitCheckResult result =
-                    rateLimitService.checkRateLimit(clientId, maxRequests, window);
-            assertThat(result.allowed()).isTrue();
+    @DisplayName("한도 횟수까지 허용하고 다음 요청부터 차단하며 count를 고정한다")
+    void checkRateLimit_AllowsExactlyLimitRequests() {
+        for (int i = 0; i < 3; i++) {
+            assertThat(rateLimitService.checkRateLimit(
+                    "ip:127.0.0.1", 3, Duration.ofSeconds(30)).allowed()).isTrue();
         }
 
-        // 한도 초과 요청
-        long beforeCall = Instant.now().getEpochSecond();
-        RateLimitCheckResult result =
-                rateLimitService.checkRateLimit(clientId, maxRequests, window);
-        long afterCall = Instant.now().getEpochSecond();
+        RateLimitCheckResult rejected = rateLimitService.checkRateLimit(
+                "ip:127.0.0.1", 3, Duration.ofSeconds(30));
 
-        assertThat(result.allowed()).isFalse();
-        assertThat(result.limit()).isEqualTo(maxRequests);
-        assertThat(result.remaining()).isZero();
-        assertThat(result.retryAfterSeconds()).isBetween(1L, window.getSeconds());
-        assertThat(result.resetEpochSeconds())
-                .isBetween(beforeCall + result.retryAfterSeconds(), afterCall + result.retryAfterSeconds());
+        assertThat(rejected.allowed()).isFalse();
+        assertThat(rejected.remaining()).isZero();
+        assertThat(redisTemplate.opsForValue().get("ratelimit:ip:127.0.0.1")).isEqualTo("3");
     }
 
     @Test
-    @DisplayName("연속 요청 시 카운트가 증가하고 남은 횟수가 감소한다")
-    void checkRateLimit_DecreasesRemainingOnConsecutiveRequests() {
-        int maxRequests = 3;
-        Duration window = Duration.ofSeconds(60);
-        String clientId = "ip:192.168.1.1";
+    @DisplayName("동시 요청에서도 정확히 limit개만 허용한다")
+    void checkRateLimit_IsAtomicUnderConcurrency() throws Exception {
+        int requestCount = 100;
+        int limit = 20;
+        try (var executor = Executors.newFixedThreadPool(20)) {
+            List<Callable<Boolean>> requests = new ArrayList<>();
+            for (int i = 0; i < requestCount; i++) {
+                requests.add(() -> rateLimitService.checkRateLimit(
+                        "user:concurrent-user", limit, Duration.ofSeconds(60)).allowed());
+            }
 
-        RateLimitCheckResult result1 =
-                rateLimitService.checkRateLimit(clientId, maxRequests, window);
-        assertThat(result1.allowed()).isTrue();
-        assertThat(result1.remaining()).isEqualTo(2);
+            long allowed = executor.invokeAll(requests).stream()
+                    .filter(future -> {
+                        try {
+                            return future.get();
+                        } catch (Exception e) {
+                            throw new RuntimeException(e);
+                        }
+                    })
+                    .count();
 
-        RateLimitCheckResult result2 =
-                rateLimitService.checkRateLimit(clientId, maxRequests, window);
-        assertThat(result2.allowed()).isTrue();
-        assertThat(result2.remaining()).isEqualTo(1);
-
-        RateLimitCheckResult result3 =
-                rateLimitService.checkRateLimit(clientId, maxRequests, window);
-        assertThat(result3.allowed()).isTrue();
-        assertThat(result3.remaining()).isZero();
-    }
-
-    @Test
-    @DisplayName("서로 다른 클라이언트는 독립적인 rate limit을 갖는다")
-    void checkRateLimit_IndependentLimitsPerClient() {
-        int maxRequests = 2;
-        Duration window = Duration.ofSeconds(60);
-        String clientId1 = "ip:10.0.0.1";
-        String clientId2 = "ip:10.0.0.2";
-
-        // 첫 번째 클라이언트가 한도까지 요청
-        for (int i = 0; i < maxRequests; i++) {
-            RateLimitCheckResult result =
-                    rateLimitService.checkRateLimit(clientId1, maxRequests, window);
-            assertThat(result.allowed()).isTrue();
+            assertThat(allowed).isEqualTo(limit);
+            assertThat(redisTemplate.opsForValue().get("ratelimit:user:concurrent-user"))
+                    .isEqualTo(String.valueOf(limit));
         }
+    }
 
-        // 첫 번째 클라이언트 한도 초과
-        RateLimitCheckResult result1 =
-                rateLimitService.checkRateLimit(clientId1, maxRequests, window);
-        assertThat(result1.allowed()).isFalse();
+    @Test
+    @DisplayName("서로 다른 client key는 독립된 한도를 가진다")
+    void checkRateLimit_UsesIndependentKeys() {
+        assertThat(rateLimitService.checkRateLimit(
+                "user:user-1", 1, Duration.ofSeconds(60)).allowed()).isTrue();
+        assertThat(rateLimitService.checkRateLimit(
+                "user:user-1", 1, Duration.ofSeconds(60)).allowed()).isFalse();
+        assertThat(rateLimitService.checkRateLimit(
+                "user:user-2", 1, Duration.ofSeconds(60)).allowed()).isTrue();
+    }
 
-        // 두 번째 클라이언트는 여전히 요청 가능
-        RateLimitCheckResult result2 =
-                rateLimitService.checkRateLimit(clientId2, maxRequests, window);
-        assertThat(result2.allowed()).isTrue();
-        assertThat(result2.remaining()).isEqualTo(1);
+    @Test
+    @DisplayName("TTL 만료 후 새로운 fixed window를 시작한다")
+    void checkRateLimit_StartsNewWindowAfterExpiry() throws Exception {
+        assertThat(rateLimitService.checkRateLimit(
+                "user:expiring-user", 1, Duration.ofSeconds(1)).allowed()).isTrue();
+        assertThat(rateLimitService.checkRateLimit(
+                "user:expiring-user", 1, Duration.ofSeconds(1)).allowed()).isFalse();
+
+        Thread.sleep(1_100);
+
+        RateLimitCheckResult nextWindow = rateLimitService.checkRateLimit(
+                "user:expiring-user", 1, Duration.ofSeconds(1));
+        assertThat(nextWindow.allowed()).isTrue();
+        assertThat(redisTemplate.opsForValue().get("ratelimit:user:expiring-user")).isEqualTo("1");
     }
 }

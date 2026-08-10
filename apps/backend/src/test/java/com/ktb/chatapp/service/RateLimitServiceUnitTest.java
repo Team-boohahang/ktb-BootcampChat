@@ -1,178 +1,108 @@
 package com.ktb.chatapp.service;
 
-import com.ktb.chatapp.model.RateLimit;
 import com.ktb.chatapp.service.ratelimit.RateLimitStore;
+import com.ktb.chatapp.service.ratelimit.RateLimitStore.RateLimitState;
+import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import java.time.Duration;
-import java.time.Instant;
-import java.util.Optional;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
-import org.mockito.ArgumentCaptor;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
-import org.springframework.test.util.ReflectionTestUtils;
 
 import static org.assertj.core.api.Assertions.assertThat;
-import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
+import static org.mockito.ArgumentMatchers.anyInt;
+import static org.mockito.ArgumentMatchers.anyLong;
+import static org.mockito.ArgumentMatchers.anyString;
 
 @ExtendWith(MockitoExtension.class)
 @DisplayName("RateLimitService 단위 테스트")
 class RateLimitServiceUnitTest {
 
-    private static final String HOST_NAME = "test-host";
-    private static final String CLIENT_ID = "client-1";
-    private static final String STORE_CLIENT_ID = HOST_NAME + ":" + CLIENT_ID;
+    private static final String CLIENT_ID = "user:user-1";
 
     @Mock
     private RateLimitStore rateLimitStore;
 
+    private SimpleMeterRegistry meterRegistry;
     private RateLimitService rateLimitService;
 
     @BeforeEach
     void setUp() {
-        rateLimitService = new RateLimitService(rateLimitStore);
-        ReflectionTestUtils.setField(rateLimitService, "hostName", HOST_NAME);
+        meterRegistry = new SimpleMeterRegistry();
+        rateLimitService = new RateLimitService(rateLimitStore, meterRegistry);
     }
 
     @Test
-    @DisplayName("최초 요청은 host-prefixed clientId로 저장되고 남은 횟수를 반환한다")
-    void checkRateLimit_FirstRequest_SavesHostPrefixedClientId() {
-        when(rateLimitStore.findByClientId(STORE_CLIENT_ID)).thenReturn(Optional.empty());
-        when(rateLimitStore.save(any(RateLimit.class))).thenAnswer(invocation -> invocation.getArgument(0));
-        ArgumentCaptor<RateLimit> rateLimitCaptor = ArgumentCaptor.forClass(RateLimit.class);
+    @DisplayName("허용된 요청은 Redis 상태로 남은 횟수와 reset 정보를 계산한다")
+    void checkRateLimit_Allowed() {
+        when(rateLimitStore.consume(CLIENT_ID, 3, 30))
+                .thenReturn(new RateLimitState(1, 25, true));
 
-        RateLimitCheckResult result = rateLimitService.checkRateLimit(CLIENT_ID, 3, Duration.ofSeconds(30));
+        RateLimitCheckResult result =
+                rateLimitService.checkRateLimit(CLIENT_ID, 3, Duration.ofSeconds(30));
 
         assertThat(result.allowed()).isTrue();
         assertThat(result.limit()).isEqualTo(3);
         assertThat(result.remaining()).isEqualTo(2);
         assertThat(result.windowSeconds()).isEqualTo(30);
-        assertThat(result.retryAfterSeconds()).isBetween(1L, 30L);
-        verify(rateLimitStore).save(rateLimitCaptor.capture());
-        assertThat(rateLimitCaptor.getValue().getClientId()).isEqualTo(STORE_CLIENT_ID);
-        assertThat(rateLimitCaptor.getValue().getCount()).isEqualTo(1);
-        assertThat(rateLimitCaptor.getValue().getExpiresAt()).isAfter(Instant.now());
+        assertThat(result.retryAfterSeconds()).isEqualTo(25);
+        verify(rateLimitStore).consume(CLIENT_ID, 3, 30);
     }
 
     @Test
-    @DisplayName("기존 카운트가 한도 미만이면 증가시켜 저장한다")
-    void checkRateLimit_ExistingBelowLimit_IncrementsCount() {
-        RateLimit existing = RateLimit.builder()
-                .clientId(STORE_CLIENT_ID)
-                .count(1)
-                .expiresAt(Instant.now().plusSeconds(20))
-                .build();
-        when(rateLimitStore.findByClientId(STORE_CLIENT_ID)).thenReturn(Optional.of(existing));
-        when(rateLimitStore.save(existing)).thenReturn(existing);
+    @DisplayName("저장소가 차단으로 판정하면 남은 횟수 0과 TTL을 반환한다")
+    void checkRateLimit_Rejected() {
+        when(rateLimitStore.consume(CLIENT_ID, 3, 30))
+                .thenReturn(new RateLimitState(3, 10, false));
 
-        RateLimitCheckResult result = rateLimitService.checkRateLimit(CLIENT_ID, 3, Duration.ofSeconds(30));
-
-        assertThat(result.allowed()).isTrue();
-        assertThat(result.remaining()).isEqualTo(1);
-        assertThat(existing.getCount()).isEqualTo(2);
-        verify(rateLimitStore).save(existing);
-    }
-
-    @Test
-    @DisplayName("기존 카운트가 한도에 도달하면 retry-after와 reset epoch를 반환하고 저장하지 않는다")
-    void checkRateLimit_LimitReached_ReturnsRetryAfterWithoutSaving() {
-        Instant expiresAt = Instant.now().plusSeconds(10);
-        RateLimit existing = RateLimit.builder()
-                .clientId(STORE_CLIENT_ID)
-                .count(3)
-                .expiresAt(expiresAt)
-                .build();
-        when(rateLimitStore.findByClientId(STORE_CLIENT_ID)).thenReturn(Optional.of(existing));
-
-        RateLimitCheckResult result = rateLimitService.checkRateLimit(CLIENT_ID, 3, Duration.ofSeconds(30));
+        RateLimitCheckResult result =
+                rateLimitService.checkRateLimit(CLIENT_ID, 3, Duration.ofSeconds(30));
 
         assertThat(result.allowed()).isFalse();
-        assertThat(result.limit()).isEqualTo(3);
         assertThat(result.remaining()).isZero();
-        assertThat(result.retryAfterSeconds()).isBetween(1L, 10L);
-        assertThat(result.resetEpochSeconds()).isEqualTo(expiresAt.getEpochSecond());
-        verify(rateLimitStore, never()).save(any(RateLimit.class));
+        assertThat(result.retryAfterSeconds()).isEqualTo(10);
     }
 
     @Test
-    @DisplayName("0초 window는 최소 1초 window로 정규화된다")
-    void checkRateLimit_ZeroWindow_NormalizesToOneSecond() {
-        when(rateLimitStore.findByClientId(STORE_CLIENT_ID)).thenReturn(Optional.empty());
-        when(rateLimitStore.save(any(RateLimit.class))).thenAnswer(invocation -> invocation.getArgument(0));
+    @DisplayName("0초 및 null window는 최소 1초로 정규화한다")
+    void checkRateLimit_InvalidWindows_NormalizeToOneSecond() {
+        when(rateLimitStore.consume(CLIENT_ID, 3, 1))
+                .thenReturn(new RateLimitState(1, 1, true));
 
-        RateLimitCheckResult result = rateLimitService.checkRateLimit(CLIENT_ID, 3, Duration.ZERO);
-
-        assertThat(result.allowed()).isTrue();
-        assertThat(result.windowSeconds()).isEqualTo(1);
-        assertThat(result.retryAfterSeconds()).isPositive();
+        assertThat(rateLimitService.checkRateLimit(CLIENT_ID, 3, Duration.ZERO).windowSeconds())
+                .isEqualTo(1);
+        assertThat(rateLimitService.checkRateLimit(CLIENT_ID, 3, null).windowSeconds())
+                .isEqualTo(1);
     }
 
     @Test
-    @DisplayName("null window는 최소 1초 window로 정규화된다")
-    void checkRateLimit_NullWindow_NormalizesToOneSecond() {
-        when(rateLimitStore.findByClientId(STORE_CLIENT_ID)).thenReturn(Optional.empty());
-        when(rateLimitStore.save(any(RateLimit.class))).thenAnswer(invocation -> invocation.getArgument(0));
+    @DisplayName("Redis 실패 시 요청을 허용하고 오류 메트릭을 증가시킨다")
+    void checkRateLimit_StoreFailure_FailsOpen() {
+        when(rateLimitStore.consume(CLIENT_ID, 3, 30))
+                .thenThrow(new IllegalStateException("redis down"));
 
-        RateLimitCheckResult result = rateLimitService.checkRateLimit(CLIENT_ID, 3, null);
-
-        assertThat(result.allowed()).isTrue();
-        assertThat(result.windowSeconds()).isEqualTo(1);
-        assertThat(result.retryAfterSeconds()).isPositive();
-    }
-
-    @Test
-    @DisplayName("만료된 저장소 문서는 새 window로 리셋된다")
-    void checkRateLimit_ExpiredStoredRateLimit_StartsNewWindow() {
-        RateLimit expired = RateLimit.builder()
-                .clientId(STORE_CLIENT_ID)
-                .count(3)
-                .expiresAt(Instant.now().minusSeconds(10))
-                .build();
-        when(rateLimitStore.findByClientId(STORE_CLIENT_ID)).thenReturn(Optional.of(expired));
-        when(rateLimitStore.save(expired)).thenReturn(expired);
-
-        RateLimitCheckResult result = rateLimitService.checkRateLimit(CLIENT_ID, 3, Duration.ofSeconds(30));
+        RateLimitCheckResult result =
+                rateLimitService.checkRateLimit(CLIENT_ID, 3, Duration.ofSeconds(30));
 
         assertThat(result.allowed()).isTrue();
-        assertThat(result.remaining()).isEqualTo(2);
-        assertThat(result.retryAfterSeconds()).isBetween(1L, 30L);
-        assertThat(result.resetEpochSeconds()).isGreaterThan(Instant.now().getEpochSecond());
-        assertThat(expired.getCount()).isEqualTo(1);
-        assertThat(expired.getExpiresAt()).isAfter(Instant.now());
-        verify(rateLimitStore).save(expired);
-    }
-
-    @Test
-    @DisplayName("저장소 실패 시 요청은 허용하고 전체 한도를 남긴다")
-    void checkRateLimit_StoreFailure_FailsOpenDeterministically() {
-        when(rateLimitStore.findByClientId(STORE_CLIENT_ID)).thenThrow(new IllegalStateException("store down"));
-
-        RateLimitCheckResult result = rateLimitService.checkRateLimit(CLIENT_ID, 3, Duration.ofSeconds(30));
-
-        assertThat(result.allowed()).isTrue();
-        assertThat(result.limit()).isEqualTo(3);
         assertThat(result.remaining()).isEqualTo(3);
-        assertThat(result.windowSeconds()).isEqualTo(30);
         assertThat(result.retryAfterSeconds()).isEqualTo(30);
+        assertThat(meterRegistry.counter("ratelimit.redis.errors").count()).isEqualTo(1);
     }
 
     @Test
-    @DisplayName("null clientId도 host prefix가 적용된 저장소 key로 처리된다")
-    void checkRateLimit_NullClientId_UsesHostPrefixedNullKey() {
-        String storeClientId = HOST_NAME + ":null";
-        when(rateLimitStore.findByClientId(storeClientId)).thenReturn(Optional.empty());
-        when(rateLimitStore.save(any(RateLimit.class))).thenAnswer(invocation -> invocation.getArgument(0));
-        ArgumentCaptor<RateLimit> rateLimitCaptor = ArgumentCaptor.forClass(RateLimit.class);
-
-        RateLimitCheckResult result = rateLimitService.checkRateLimit(null, 3, Duration.ofSeconds(30));
+    @DisplayName("clientId가 없으면 Redis를 호출하지 않고 fail-open 처리한다")
+    void checkRateLimit_BlankClientId_FailsOpenWithoutStoreCall() {
+        RateLimitCheckResult result =
+                rateLimitService.checkRateLimit(null, 3, Duration.ofSeconds(30));
 
         assertThat(result.allowed()).isTrue();
-        verify(rateLimitStore).save(rateLimitCaptor.capture());
-        assertThat(rateLimitCaptor.getValue().getClientId()).isEqualTo(storeClientId);
+        assertThat(meterRegistry.counter("ratelimit.redis.errors").count()).isEqualTo(1);
+        verify(rateLimitStore, never()).consume(anyString(), anyInt(), anyLong());
     }
 }

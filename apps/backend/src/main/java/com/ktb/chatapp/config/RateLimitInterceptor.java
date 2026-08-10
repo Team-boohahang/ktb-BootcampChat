@@ -19,6 +19,7 @@ import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.stereotype.Component;
 import org.springframework.web.method.HandlerMethod;
 import org.springframework.web.servlet.HandlerInterceptor;
+import org.springframework.util.StringUtils;
 
 @Slf4j
 @Component
@@ -71,19 +72,33 @@ public class RateLimitInterceptor implements HandlerInterceptor {
             case USER:
                 Authentication auth = SecurityContextHolder.getContext().getAuthentication();
                 if (auth != null && auth.isAuthenticated() && !auth.getName().equals("anonymousUser")) {
-                    return "user:" + auth.getName();
+                    String userId = getUserId(auth);
+                    if (StringUtils.hasText(userId)) {
+                        return "user:" + userId;
+                    }
                 }
                 return "ip:" + clientIp;
             case IP_AND_USER:
                 Authentication userAuth = SecurityContextHolder.getContext().getAuthentication();
                 if (userAuth != null && userAuth.isAuthenticated() && !userAuth.getName().equals("anonymousUser")) {
-                    return "ip_user:" + clientIp + ":" + userAuth.getName();
+                    String userId = getUserId(userAuth);
+                    if (StringUtils.hasText(userId)) {
+                        return "ip_user:" + clientIp + ":" + userId;
+                    }
                 }
                 return "ip:" + clientIp;
             case IP:
             default:
                 return "ip:" + clientIp;
         }
+    }
+
+    private String getUserId(Authentication authentication) {
+        if (authentication.getDetails() instanceof Map<?, ?> details) {
+            Object userId = details.get("userId");
+            return userId != null ? userId.toString() : null;
+        }
+        return null;
     }
 
     private void applyRateLimitHeaders(HttpServletResponse response, RateLimitCheckResult result) {

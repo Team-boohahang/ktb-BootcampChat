@@ -1,27 +1,12 @@
 package com.ktb.chatapp.service.ratelimit;
 
-import com.ktb.chatapp.model.RateLimit;
-import java.util.Optional;
-
 /**
- * Data store interface for rate limit storage.
- * Provides operations for storing and retrieving rate limit data.
+ * 원자적인 rate limit 카운터 저장소.
  */
 public interface RateLimitStore {
-    
-    /**
-     * Find rate limit by client ID
-     *
-     * @param clientId the client identifier
-     * @return Optional containing the RateLimit if found, empty otherwise
-     */
-    Optional<RateLimit> findByClientId(String clientId);
-    
-    /**
-     * Save or update rate limit
-     *
-     * @param rateLimit the rate limit to save
-     * @return the saved rate limit
-     */
-    RateLimit save(RateLimit rateLimit);
+
+    RateLimitState consume(String clientId, int limit, long windowSeconds);
+
+    record RateLimitState(long count, long ttlSeconds, boolean allowed) {
+    }
 }

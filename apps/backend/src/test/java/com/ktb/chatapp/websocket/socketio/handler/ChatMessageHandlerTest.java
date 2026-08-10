@@ -85,7 +85,7 @@ class ChatMessageHandlerTest {
                 .thenReturn(validResult);
 
         RateLimitCheckResult allowedResult = RateLimitCheckResult.allowed(10000, 9999, 60, System.currentTimeMillis() / 1000 + 60, 60);
-        when(rateLimitService.checkRateLimit(eq(socketUser.id()), anyInt(), any()))
+        when(rateLimitService.checkRateLimit(eq("user:" + socketUser.id()), anyInt(), any()))
                 .thenReturn(allowedResult);
 
         User user = new User();
@@ -125,7 +125,7 @@ class ChatMessageHandlerTest {
 
         when(sessionService.validateSession(socketUser.id(), socketUser.authSessionId()))
                 .thenReturn(SessionValidationResult.valid(null));
-        when(rateLimitService.checkRateLimit(eq(socketUser.id()), anyInt(), any()))
+        when(rateLimitService.checkRateLimit(eq("user:" + socketUser.id()), anyInt(), any()))
                 .thenReturn(RateLimitCheckResult.allowed(10000, 9999, 60, System.currentTimeMillis() / 1000 + 60, 60));
 
         User user = new User();

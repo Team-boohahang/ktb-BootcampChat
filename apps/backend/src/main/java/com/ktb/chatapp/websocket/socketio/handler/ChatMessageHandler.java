@@ -91,7 +91,7 @@ public class ChatMessageHandler {
 
         // Rate limit check
         RateLimitCheckResult rateLimitResult =
-                rateLimitService.checkRateLimit(socketUser.id(), 10000, Duration.ofMinutes(1));
+                rateLimitService.checkRateLimit("user:" + socketUser.id(), 10000, Duration.ofMinutes(1));
         if (!rateLimitResult.allowed()) {
             recordError("rate_limit_exceeded");
             Counter.builder("socketio.messages.rate_limit")
