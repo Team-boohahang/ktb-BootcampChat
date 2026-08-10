@@ -25,6 +25,7 @@ const ChatInput = forwardRef(({
   const dropZoneRef = useRef(null);
   const internalInputRef = useRef(null);
   const messageInputRef = ref || internalInputRef;
+  const isComposingRef = useRef(false);
 
   const {
     message,
@@ -280,6 +281,17 @@ const ChatInput = forwardRef(({
   }, [insertMention, messageInputRef]);
 
   const handleKeyDown = useCallback((e) => {
+    // 한글과 같은 IME 입력은 마지막 글자를 확정하는 Enter도 keydown으로 전달한다.
+    // 이 Enter를 메시지 전송으로 처리하면 조합이 끝난 마지막 글자가 별도로 남아
+    // 다음 메시지로 다시 전송될 수 있다. 일부 브라우저는 isComposing 대신 229를 쓴다.
+    if (
+      e.nativeEvent?.isComposing ||
+      isComposingRef.current ||
+      e.keyCode === 229
+    ) {
+      return;
+    }
+
     if (showMentionList) {
       const participants = getFilteredParticipants(room); // room 객체 전달
       const participantsCount = participants.length;
@@ -410,6 +422,12 @@ const ChatInput = forwardRef(({
                   value={message}
                   onChange={handleInputChange}
                   onKeyDown={handleKeyDown}
+                  onCompositionStart={() => {
+                    isComposingRef.current = true;
+                  }}
+                  onCompositionEnd={() => {
+                    isComposingRef.current = false;
+                  }}
                   placeholder={isDragging ? "파일을 여기에 놓아주세요." : "메시지를 입력하세요... (@를 입력하여 멘션, Shift + Enter로 줄바꿈)"}
                   disabled={isDisabled}
                   rows={1}
