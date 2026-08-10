@@ -37,6 +37,33 @@ public class SocketIOConfig {
     @Value("${socketio.server.origin:*}")
     private String origin;
 
+    @Value("${socketio.server.accept-backlog:128}")
+    private int acceptBackLog;
+
+    @Value("${socketio.server.tcp-send-buffer-size:65536}")
+    private int tcpSendBufferSize;
+
+    @Value("${socketio.server.tcp-receive-buffer-size:65536}")
+    private int tcpReceiveBufferSize;
+
+    @Value("${socketio.server.tcp-no-delay:true}")
+    private boolean tcpNoDelay;
+
+    @Value("${socketio.server.ping-timeout:60000}")
+    private int pingTimeout;
+
+    @Value("${socketio.server.ping-interval:25000}")
+    private int pingInterval;
+
+    @Value("${socketio.server.upgrade-timeout:10000}")
+    private int upgradeTimeout;
+
+    @Value("${socketio.server.boss-threads:0}")
+    private int bossThreads;
+
+    @Value("${socketio.server.worker-threads:0}")
+    private int workerThreads;
+
     @Bean(initMethod = "start", destroyMethod = "stop")
     public SocketIOServer socketIOServer(AuthTokenListener authTokenListener, MeterRegistry meterRegistry) {
         com.corundumstudio.socketio.Configuration config = new com.corundumstudio.socketio.Configuration();
@@ -45,24 +72,35 @@ public class SocketIOConfig {
         
         var socketConfig = new SocketConfig();
         socketConfig.setReuseAddress(true);
-        socketConfig.setTcpNoDelay(false);
-        socketConfig.setAcceptBackLog(10);
-        socketConfig.setTcpSendBufferSize(4096);
-        socketConfig.setTcpReceiveBufferSize(4096);
+        socketConfig.setTcpNoDelay(tcpNoDelay);
+        socketConfig.setAcceptBackLog(acceptBackLog);
+        socketConfig.setTcpSendBufferSize(tcpSendBufferSize);
+        socketConfig.setTcpReceiveBufferSize(tcpReceiveBufferSize);
         config.setSocketConfig(socketConfig);
+
+        if (bossThreads > 0) {
+            config.setBossThreads(bossThreads);
+        }
+        if (workerThreads > 0) {
+            config.setWorkerThreads(workerThreads);
+        }
 
         config.setOrigin(origin);
 
         // Socket.IO settings
-        config.setPingTimeout(60000);
-        config.setPingInterval(25000);
-        config.setUpgradeTimeout(10000);
+        config.setPingTimeout(pingTimeout);
+        config.setPingInterval(pingInterval);
+        config.setUpgradeTimeout(upgradeTimeout);
 
         config.setJsonSupport(new JacksonJsonSupport(new JavaTimeModule()));
         config.setStoreFactory(new MemoryStoreFactory()); // 단일노드 전용
 
-        log.info("Socket.IO server configured on {}:{} with {} boss threads and {} worker threads",
-                 host, port, config.getBossThreads(), config.getWorkerThreads());
+        log.info(
+                "Socket.IO server configured on {}:{} with {} boss threads, {} worker threads, backlog={}, sendBuffer={}, receiveBuffer={}, tcpNoDelay={}, pingInterval={}ms, pingTimeout={}ms, upgradeTimeout={}ms",
+                host, port, config.getBossThreads(), config.getWorkerThreads(),
+                acceptBackLog, tcpSendBufferSize, tcpReceiveBufferSize, tcpNoDelay,
+                pingInterval, pingTimeout, upgradeTimeout
+        );
         var socketIOServer = new SocketIOServer(config);
         socketIOServer.getNamespace(Namespace.DEFAULT_NAME).addAuthTokenListener(authTokenListener);
         socketIOServer.getNamespace(Namespace.DEFAULT_NAME).addEventInterceptor((client, name, data, ack) -> {

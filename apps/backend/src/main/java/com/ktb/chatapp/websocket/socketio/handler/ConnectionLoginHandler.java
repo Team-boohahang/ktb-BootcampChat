@@ -9,6 +9,7 @@ import com.ktb.chatapp.websocket.socketio.UserRooms;
 import io.micrometer.core.instrument.Gauge;
 import io.micrometer.core.instrument.MeterRegistry;
 import java.time.Duration;
+import java.util.HashSet;
 import java.util.Map;
 import java.util.Set;
 import java.util.UUID;
@@ -32,20 +33,17 @@ public class ConnectionLoginHandler {
     private final ConnectedUsers connectedUsers;
     private final UserRooms userRooms;
     private final RoomJoinHandler roomJoinHandler;
-    private final RoomLeaveHandler roomLeaveHandler;
 
     public ConnectionLoginHandler(
             SocketIOServer socketIOServer,
             ConnectedUsers connectedUsers,
             UserRooms userRooms,
             RoomJoinHandler roomJoinHandler,
-            RoomLeaveHandler roomLeaveHandler,
             MeterRegistry meterRegistry) {
         this.socketIOServer = socketIOServer;
         this.connectedUsers = connectedUsers;
         this.userRooms = userRooms;
         this.roomJoinHandler = roomJoinHandler;
-        this.roomLeaveHandler = roomLeaveHandler;
 
         // Register gauge metric for concurrent users
         Gauge.builder("socketio.concurrent.users", connectedUsers::size)
@@ -93,15 +91,15 @@ public class ConnectionLoginHandler {
             if (userId == null) {
                 return;
             }
-            
-            userRooms.get(userId).forEach(roomId -> {
-                roomLeaveHandler.handleLeaveRoom(client, roomId);
-            });
+
             String socketId = client.getSessionId().toString();
             
             // 해당 사용자의 현재 활성 연결인 경우에만 정리
             var socketUser = connectedUsers.get(userId);
             if (socketUser != null && socketId.equals(socketUser.socketId())) {
+                Set<String> rooms = new HashSet<>(userRooms.get(userId));
+                rooms.forEach(client::leaveRoom);
+                userRooms.clear(userId);
                 connectedUsers.del(userId);
             } else {
                 log.warn("Socket.IO disconnect: User {} has a different active connection. Skipping cleanup.", userId);
@@ -109,7 +107,6 @@ public class ConnectionLoginHandler {
 
             client.leaveRooms(Set.of("user:" + userId, "room-list"));
             client.del("user");
-            client.disconnect();
 
             log.info("Socket.IO user disconnected: {} ({}) - Total concurrent users: {}",
                     userName, userId, connectedUsers.size());
