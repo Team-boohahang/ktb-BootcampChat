@@ -12,6 +12,7 @@ import lombok.NoArgsConstructor;
 @AllArgsConstructor
 public class ChatMessageRequest {
 
+    private String clientMessageId;
     private String room;
     private String type;
     private String content;
