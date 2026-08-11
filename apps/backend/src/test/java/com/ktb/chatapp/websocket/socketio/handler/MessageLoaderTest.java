@@ -83,7 +83,7 @@ class MessageLoaderTest {
                 .thenReturn(List.of(testUser));
         lenient().when(messageReadStatusService
                         .updateReadStatus(anyString(), anyList(), anyString()))
-                .thenReturn(true);
+                .thenReturn(0L);
     }
     
     private Message createMessage(String id, LocalDateTime timestamp) {
@@ -132,7 +132,7 @@ class MessageLoaderTest {
                 .thenReturn(getMessagePage(first30Messages));
         when(messageReadStatusService
                         .updateReadStatus(eq(roomId), anyList(), eq(userId)))
-                .thenReturn(false);
+                .thenReturn(-1L);
 
         FetchMessagesResponse result = messageLoader.loadMessages(
                 new FetchMessagesRequest(roomId, 30, null), userId);

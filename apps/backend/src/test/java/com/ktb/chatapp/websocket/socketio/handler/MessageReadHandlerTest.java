@@ -69,7 +69,7 @@ class MessageReadHandlerTest {
     @Test
     void handleMarkAsRead_updatesStatusAndBroadcasts() {
         MarkAsReadRequest request = request("message-1");
-        Message message = Message.builder().id("message-1").roomId("room-1").build();
+        Message message = Message.builder().id("message-1").roomId("room-1").senderId("sender-1").build();
         Room room = Room.builder().id("room-1").participantIds(Set.of("user-1")).build();
         User user = User.builder().id("user-1").name("tester").email("tester@example.com").build();
 
@@ -79,8 +79,9 @@ class MessageReadHandlerTest {
         when(userRepository.findById("user-1")).thenReturn(Optional.of(user));
         when(roomRepository.findById("room-1")).thenReturn(Optional.of(room));
         when(messageReadStatusService.updateReadStatus(
-                "room-1", List.of("message-1"), "user-1")).thenReturn(true);
-        when(socketIOServer.getRoomOperations("room-1")).thenReturn(roomOperations);
+                "room-1", List.of("message-1"), "user-1")).thenReturn(1L);
+        when(messageRepository.findAllById(List.of("message-1"))).thenReturn(List.of(message));
+        when(socketIOServer.getRoomOperations("user:sender-1")).thenReturn(roomOperations);
 
         handler.handleMarkAsRead(client, request);
 
@@ -94,7 +95,62 @@ class MessageReadHandlerTest {
     }
 
     @Test
-    void handleMarkAsRead_doesNotBroadcastWhenUpdateFails() {
+    void handleMarkAsRead_groupsNotificationsByMessageSender() {
+        MarkAsReadRequest request = new MarkAsReadRequest();
+        request.setMessageIds(List.of("message-1", "message-2", "message-3"));
+        Message first = Message.builder().id("message-1").roomId("room-1").senderId("sender-1").build();
+        Message second = Message.builder().id("message-2").roomId("room-1").senderId("sender-1").build();
+        Message third = Message.builder().id("message-3").roomId("room-1").senderId("sender-2").build();
+        Room room = Room.builder().id("room-1").participantIds(Set.of("user-1")).build();
+        User user = User.builder().id("user-1").name("tester").email("tester@example.com").build();
+        BroadcastOperations senderOneOperations = org.mockito.Mockito.mock(BroadcastOperations.class);
+        BroadcastOperations senderTwoOperations = org.mockito.Mockito.mock(BroadcastOperations.class);
+
+        when(client.get("user"))
+                .thenReturn(new SocketUser("user-1", "tester", "session-1", "socket-1"));
+        when(messageRepository.findById("message-1")).thenReturn(Optional.of(first));
+        when(userRepository.findById("user-1")).thenReturn(Optional.of(user));
+        when(roomRepository.findById("room-1")).thenReturn(Optional.of(room));
+        when(messageReadStatusService.updateReadStatus("room-1", request.getMessageIds(), "user-1")).thenReturn(3L);
+        when(messageRepository.findAllById(request.getMessageIds())).thenReturn(List.of(first, second, third));
+        when(socketIOServer.getRoomOperations("user:sender-1")).thenReturn(senderOneOperations);
+        when(socketIOServer.getRoomOperations("user:sender-2")).thenReturn(senderTwoOperations);
+
+        handler.handleMarkAsRead(client, request);
+
+        ArgumentCaptor<Object> senderOneResponse = ArgumentCaptor.forClass(Object.class);
+        verify(senderOneOperations).sendEvent(eq(MESSAGES_READ), senderOneResponse.capture());
+        assertEquals(List.of("message-1", "message-2"),
+                ((MessagesReadResponse) senderOneResponse.getValue()).getMessageIds());
+
+        ArgumentCaptor<Object> senderTwoResponse = ArgumentCaptor.forClass(Object.class);
+        verify(senderTwoOperations).sendEvent(eq(MESSAGES_READ), senderTwoResponse.capture());
+        assertEquals(List.of("message-3"),
+                ((MessagesReadResponse) senderTwoResponse.getValue()).getMessageIds());
+    }
+
+    @Test
+    void handleMarkAsRead_skipsNotificationWhenReaderIsSender() {
+        MarkAsReadRequest request = request("message-1");
+        Message message = Message.builder().id("message-1").roomId("room-1").senderId("user-1").build();
+        Room room = Room.builder().id("room-1").participantIds(Set.of("user-1")).build();
+        User user = User.builder().id("user-1").name("tester").email("tester@example.com").build();
+
+        when(client.get("user"))
+                .thenReturn(new SocketUser("user-1", "tester", "session-1", "socket-1"));
+        when(messageRepository.findById("message-1")).thenReturn(Optional.of(message));
+        when(userRepository.findById("user-1")).thenReturn(Optional.of(user));
+        when(roomRepository.findById("room-1")).thenReturn(Optional.of(room));
+        when(messageReadStatusService.updateReadStatus("room-1", List.of("message-1"), "user-1")).thenReturn(1L);
+        when(messageRepository.findAllById(List.of("message-1"))).thenReturn(List.of(message));
+
+        handler.handleMarkAsRead(client, request);
+
+        verify(socketIOServer, never()).getRoomOperations(any());
+    }
+
+    @Test
+    void handleMarkAsRead_skipsBroadcastWhenNothingChanged() {
         MarkAsReadRequest request = request("message-1");
         Message message = Message.builder().id("message-1").roomId("room-1").build();
         Room room = Room.builder().id("room-1").participantIds(Set.of("user-1")).build();
@@ -106,7 +162,28 @@ class MessageReadHandlerTest {
         when(userRepository.findById("user-1")).thenReturn(Optional.of(user));
         when(roomRepository.findById("room-1")).thenReturn(Optional.of(room));
         when(messageReadStatusService.updateReadStatus(
-                "room-1", List.of("message-1"), "user-1")).thenReturn(false);
+                "room-1", List.of("message-1"), "user-1")).thenReturn(0L);
+
+        handler.handleMarkAsRead(client, request);
+
+        verify(socketIOServer, never()).getRoomOperations(any());
+        verify(roomOperations, never()).sendEvent(any(), any());
+    }
+
+    @Test
+    void handleMarkAsRead_sendsErrorWhenUpdateFails() {
+        MarkAsReadRequest request = request("message-1");
+        Message message = Message.builder().id("message-1").roomId("room-1").build();
+        Room room = Room.builder().id("room-1").participantIds(Set.of("user-1")).build();
+        User user = User.builder().id("user-1").name("tester").email("tester@example.com").build();
+
+        when(client.get("user"))
+                .thenReturn(new SocketUser("user-1", "tester", "session-1", "socket-1"));
+        when(messageRepository.findById("message-1")).thenReturn(Optional.of(message));
+        when(userRepository.findById("user-1")).thenReturn(Optional.of(user));
+        when(roomRepository.findById("room-1")).thenReturn(Optional.of(room));
+        when(messageReadStatusService.updateReadStatus(
+                "room-1", List.of("message-1"), "user-1")).thenReturn(-1L);
 
         handler.handleMarkAsRead(client, request);
 

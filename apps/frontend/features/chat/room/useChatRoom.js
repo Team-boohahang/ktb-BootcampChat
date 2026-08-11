@@ -83,6 +83,7 @@ export const useChatRoom = ({ roomId, onNavigate, onReplace, asPath }) => {
 
       // Socket cleanup
       if (roomId && socketRef.current?.connected) {
+        socketClient.flushPendingReads(socketRef.current);
         socketClient.tryLeaveRoom(roomId, socketRef.current);
       }
 

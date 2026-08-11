@@ -20,7 +20,8 @@ import static org.junit.jupiter.api.Assertions.*;
 @SpringBootTest
 @Import(MongoTestContainer.class)
 @TestPropertySource(properties = {
-    "socketio.enabled=false"
+    "socketio.enabled=false",
+    "SESSION_ACTIVITY_UPDATE_INTERVAL_MS=50"
 })
 @DisplayName("SessionService 통합 테스트")
 class SessionServiceTest {

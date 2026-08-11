@@ -1,5 +1,7 @@
 import socketService from '../../services/socket';
 
+const READ_BATCH_WINDOW_MS = 500;
+
 const sendDomainEvent = (service, socket, event, data) => {
   if (socket) {
     return service.sendOn(socket, event, data);
@@ -110,67 +112,124 @@ const subscribeMappedEvents = (emitter, handlers, eventMap) => {
   };
 };
 
-export const createSocketClient = (service = socketService) => ({
-  connect: (options) => service.connect(options),
-  disconnect: () => service.disconnect(),
-  isConnected: () => service.isConnected(),
-  canSend: () => service.isConnected(),
-  send: (event, data) => service.send(event, data),
-  sendChatMessage: (payload, socket) => sendDomainEvent(service, socket, 'chatMessage', payload),
-  sendChatMessageAndWait: (payload, socket, { timeoutMs = 8000 } = {}) =>
-    waitForSocketEvent({
-      socket,
-      successEvent: 'message',
-      errorEvents: ['error'],
-      timeoutMs,
-      timeoutMessage: '메시지 전송이 지연되고 있습니다. 다시 시도해주세요.',
-      send: () => sendDomainEvent(service, socket, 'chatMessage', payload),
-    }),
-  fetchPreviousMessages: (payload, socket) => sendDomainEvent(service, socket, 'fetchPreviousMessages', payload),
-  fetchPreviousMessagesAndWait: (payload, socket, { timeoutMs = 10000 } = {}) =>
-    waitForSocketEvent({
-      socket,
-      successEvent: 'previousMessagesLoaded',
-      errorEvents: ['error'],
-      timeoutMs,
-      timeoutMessage: '메시지 로딩 시간이 초과되었습니다.',
-      send: () => sendDomainEvent(service, socket, 'fetchPreviousMessages', payload),
-    }),
-  joinRoom: (roomId, socket) => sendDomainEvent(service, socket, 'joinRoom', roomId),
-  joinRoomAndWait: (roomId, socket, { timeoutMs = 10000 } = {}) =>
-    waitForSocketEvent({
-      socket,
-      successEvent: 'joinRoomSuccess',
-      errorEvents: ['joinRoomError', 'error'],
-      timeoutMs,
-      timeoutMessage: '채팅방 입장 시간이 초과되었습니다.',
-      send: () => sendDomainEvent(service, socket, 'joinRoom', roomId),
-    }),
-  leaveRoom: (roomId, socket) => sendDomainEvent(service, socket, 'leaveRoom', roomId),
-  tryLeaveRoom: (roomId, socket) => service.trySendOn(socket, 'leaveRoom', roomId),
-  markMessagesAsRead: (messageIds, socket) => {
+export const createSocketClient = (service = socketService) => {
+  const pendingReadIds = new Set();
+  let readBatchTimer = null;
+  let readBatchSocket = null;
+
+  const clearReadBatchTimer = () => {
+    if (readBatchTimer) {
+      clearTimeout(readBatchTimer);
+      readBatchTimer = null;
+    }
+  };
+
+  const flushPendingReads = (socket = readBatchSocket) => {
+    clearReadBatchTimer();
+
+    const messageIds = [...pendingReadIds];
+    pendingReadIds.clear();
+    readBatchSocket = null;
+
+    if (messageIds.length === 0) {
+      return false;
+    }
+
+    return sendDomainEvent(service, socket, 'markMessagesAsRead', { messageIds });
+  };
+
+  const queueReadBatch = (messageIds, socket) => {
     if (!Array.isArray(messageIds)) {
       throw new Error('messageIds must be an array');
     }
 
-    return sendDomainEvent(service, socket, 'markMessagesAsRead', { messageIds });
-  },
-  sendMessageReaction: (messageId, reaction, type, socket) => sendDomainEvent(service, socket, 'messageReaction', {
-    messageId,
-    reaction,
-    type,
-  }),
-  subscribeRoomEvents: (socket, handlers) => subscribeMappedEvents(socket, handlers, roomEventMap),
-  subscribeConnectionEvents: (socket, handlers) => {
-    const unsubscribeSocket = subscribeMappedEvents(socket, handlers, connectionEventMap);
-    const unsubscribeManager = subscribeMappedEvents(socket?.io, handlers, managerEventMap);
+    if (pendingReadIds.size > 0 && socket !== readBatchSocket) {
+      flushPendingReads(readBatchSocket);
+    }
 
-    return () => {
-      unsubscribeSocket();
-      unsubscribeManager();
-    };
-  },
-});
+    for (const messageId of messageIds) {
+      if (messageId) {
+        pendingReadIds.add(messageId);
+      }
+    }
+
+    if (pendingReadIds.size === 0) {
+      return false;
+    }
+
+    readBatchSocket = socket;
+    if (!readBatchTimer) {
+      readBatchTimer = setTimeout(() => {
+        flushPendingReads(readBatchSocket);
+      }, READ_BATCH_WINDOW_MS);
+    }
+
+    return true;
+  };
+
+  return {
+    connect: (options) => service.connect(options),
+    disconnect: () => {
+      try {
+        flushPendingReads();
+      } finally {
+        service.disconnect();
+      }
+    },
+    isConnected: () => service.isConnected(),
+    canSend: () => service.isConnected(),
+    send: (event, data) => service.send(event, data),
+    sendChatMessage: (payload, socket) => sendDomainEvent(service, socket, 'chatMessage', payload),
+    sendChatMessageAndWait: (payload, socket, { timeoutMs = 8000 } = {}) =>
+      waitForSocketEvent({
+        socket,
+        successEvent: 'message',
+        errorEvents: ['error'],
+        timeoutMs,
+        timeoutMessage: '메시지 전송이 지연되고 있습니다. 다시 시도해주세요.',
+        send: () => sendDomainEvent(service, socket, 'chatMessage', payload),
+      }),
+    fetchPreviousMessages: (payload, socket) => sendDomainEvent(service, socket, 'fetchPreviousMessages', payload),
+    fetchPreviousMessagesAndWait: (payload, socket, { timeoutMs = 10000 } = {}) =>
+      waitForSocketEvent({
+        socket,
+        successEvent: 'previousMessagesLoaded',
+        errorEvents: ['error'],
+        timeoutMs,
+        timeoutMessage: '메시지 로딩 시간이 초과되었습니다.',
+        send: () => sendDomainEvent(service, socket, 'fetchPreviousMessages', payload),
+      }),
+    joinRoom: (roomId, socket) => sendDomainEvent(service, socket, 'joinRoom', roomId),
+    joinRoomAndWait: (roomId, socket, { timeoutMs = 10000 } = {}) =>
+      waitForSocketEvent({
+        socket,
+        successEvent: 'joinRoomSuccess',
+        errorEvents: ['joinRoomError', 'error'],
+        timeoutMs,
+        timeoutMessage: '채팅방 입장 시간이 초과되었습니다.',
+        send: () => sendDomainEvent(service, socket, 'joinRoom', roomId),
+      }),
+    leaveRoom: (roomId, socket) => sendDomainEvent(service, socket, 'leaveRoom', roomId),
+    tryLeaveRoom: (roomId, socket) => service.trySendOn(socket, 'leaveRoom', roomId),
+    markMessagesAsRead: queueReadBatch,
+    flushPendingReads,
+    sendMessageReaction: (messageId, reaction, type, socket) => sendDomainEvent(service, socket, 'messageReaction', {
+      messageId,
+      reaction,
+      type,
+    }),
+    subscribeRoomEvents: (socket, handlers) => subscribeMappedEvents(socket, handlers, roomEventMap),
+    subscribeConnectionEvents: (socket, handlers) => {
+      const unsubscribeSocket = subscribeMappedEvents(socket, handlers, connectionEventMap);
+      const unsubscribeManager = subscribeMappedEvents(socket?.io, handlers, managerEventMap);
+
+      return () => {
+        unsubscribeSocket();
+        unsubscribeManager();
+      };
+    },
+  };
+};
 
 const socketClient = createSocketClient();
 
