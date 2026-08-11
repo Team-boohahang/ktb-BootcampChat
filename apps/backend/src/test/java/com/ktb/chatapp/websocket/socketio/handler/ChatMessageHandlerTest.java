@@ -23,6 +23,7 @@ import com.ktb.chatapp.websocket.socketio.SocketUser;
 import com.ktb.chatapp.websocket.socketio.ai.AiService;
 import io.micrometer.core.instrument.MeterRegistry;
 import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
+import java.time.Duration;
 import java.time.LocalDateTime;
 import java.util.HashSet;
 import java.util.Map;
@@ -85,7 +86,8 @@ class ChatMessageHandlerTest {
                 .thenReturn(validResult);
 
         RateLimitCheckResult allowedResult = RateLimitCheckResult.allowed(10000, 9999, 60, System.currentTimeMillis() / 1000 + 60, 60);
-        when(rateLimitService.checkRateLimit(eq(socketUser.id()), anyInt(), any()))
+        when(rateLimitService.checkRateLimit(
+                        eq("socket:message:user:" + socketUser.id()), anyInt(), any()))
                 .thenReturn(allowedResult);
 
         User user = new User();
@@ -125,7 +127,8 @@ class ChatMessageHandlerTest {
 
         when(sessionService.validateSession(socketUser.id(), socketUser.authSessionId()))
                 .thenReturn(SessionValidationResult.valid(null));
-        when(rateLimitService.checkRateLimit(eq(socketUser.id()), anyInt(), any()))
+        when(rateLimitService.checkRateLimit(
+                        eq("socket:message:user:" + socketUser.id()), anyInt(), any()))
                 .thenReturn(RateLimitCheckResult.allowed(10000, 9999, 60, System.currentTimeMillis() / 1000 + 60, 60));
 
         User user = new User();
@@ -162,5 +165,39 @@ class ChatMessageHandlerTest {
         verify(roomActivityNotifier).notifyMessageStored("room-1");
         org.junit.jupiter.api.Assertions.assertEquals("message-1", payloadCaptor.getValue().getId());
         org.junit.jupiter.api.Assertions.assertEquals("hello", payloadCaptor.getValue().getContent());
+    }
+
+    @Test
+    void handleChatMessage_rejectsRateLimitedSocketMessageUsingDedicatedKey() {
+        SocketIOClient client = mock(SocketIOClient.class);
+        SocketUser socketUser = new SocketUser("user-1", "tester", "session-1", "socket-1");
+        when(client.get("user")).thenReturn(socketUser);
+        when(sessionService.validateSession(socketUser.id(), socketUser.authSessionId()))
+                .thenReturn(SessionValidationResult.valid(null));
+        when(rateLimitService.checkRateLimit(
+                        "socket:message:user:" + socketUser.id(),
+                        10000,
+                        Duration.ofMinutes(1)))
+                .thenReturn(RateLimitCheckResult.rejected(
+                        10000,
+                        60,
+                        System.currentTimeMillis() / 1000 + 30,
+                        30));
+
+        ChatMessageRequest request = ChatMessageRequest.builder()
+                .room("room-1")
+                .type("text")
+                .content("hello")
+                .build();
+
+        handler.handleChatMessage(client, request);
+
+        @SuppressWarnings("unchecked")
+        ArgumentCaptor<Map<String, Object>> payloadCaptor = ArgumentCaptor.forClass(Map.class);
+        verify(client).sendEvent(eq(ERROR), payloadCaptor.capture());
+        org.junit.jupiter.api.Assertions.assertEquals(
+                "RATE_LIMIT_EXCEEDED", payloadCaptor.getValue().get("code"));
+        org.junit.jupiter.api.Assertions.assertEquals(30L, payloadCaptor.getValue().get("retryAfter"));
+        verifyNoInteractions(messageRepository, roomRepository, userRepository, fileRepository);
     }
 }

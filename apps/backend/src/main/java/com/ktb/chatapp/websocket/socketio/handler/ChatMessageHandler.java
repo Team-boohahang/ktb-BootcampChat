@@ -39,6 +39,8 @@ import static com.ktb.chatapp.websocket.socketio.SocketIOEvents.*;
 @ConditionalOnProperty(name = "socketio.enabled", havingValue = "true", matchIfMissing = true)
 @RequiredArgsConstructor
 public class ChatMessageHandler {
+    private static final String MESSAGE_RATE_LIMIT_CLIENT_PREFIX = "socket:message:user:";
+
     private final SocketIOServer socketIOServer;
     private final MessageRepository messageRepository;
     private final RoomRepository roomRepository;
@@ -91,7 +93,10 @@ public class ChatMessageHandler {
 
         // Rate limit check
         RateLimitCheckResult rateLimitResult =
-                rateLimitService.checkRateLimit(socketUser.id(), 10000, Duration.ofMinutes(1));
+                rateLimitService.checkRateLimit(
+                        MESSAGE_RATE_LIMIT_CLIENT_PREFIX + socketUser.id(),
+                        10000,
+                        Duration.ofMinutes(1));
         if (!rateLimitResult.allowed()) {
             recordError("rate_limit_exceeded");
             Counter.builder("socketio.messages.rate_limit")
