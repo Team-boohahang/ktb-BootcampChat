@@ -81,7 +81,9 @@ class MessageLoaderTest {
         
         lenient().when(userRepository.findAllById(anyIterable()))
                 .thenReturn(List.of(testUser));
-        lenient().doNothing().when(messageReadStatusService).updateReadStatus(anyList(), anyString());
+        lenient().when(messageReadStatusService
+                        .updateReadStatus(anyString(), anyList(), anyString()))
+                .thenReturn(true);
     }
     
     private Message createMessage(String id, LocalDateTime timestamp) {
@@ -118,6 +120,25 @@ class MessageLoaderTest {
         
         // 시간순 정렬 확인 (오름차순: 오래된 것 → 최신 것)
         // [50시간 전, 49시간 전, ..., 21시간 전]
+        verifyAscending(result);
+    }
+
+    @Test
+    @DisplayName("loadMessages: 읽음 상태 갱신 실패 시에도 조회한 메시지 반환")
+    void loadMessages_shouldReturnMessagesWhenReadStatusUpdateFails() {
+        List<Message> first30Messages = testMessages.subList(0, 30);
+        when(messageRepository.findByRoomIdAndTimestampBefore(
+                eq(roomId), any(LocalDateTime.class), any(Pageable.class)))
+                .thenReturn(getMessagePage(first30Messages));
+        when(messageReadStatusService
+                        .updateReadStatus(eq(roomId), anyList(), eq(userId)))
+                .thenReturn(false);
+
+        FetchMessagesResponse result = messageLoader.loadMessages(
+                new FetchMessagesRequest(roomId, 30, null), userId);
+
+        assertThat(result.getMessages()).hasSize(30);
+        assertThat(result.isHasMore()).isTrue();
         verifyAscending(result);
     }
 

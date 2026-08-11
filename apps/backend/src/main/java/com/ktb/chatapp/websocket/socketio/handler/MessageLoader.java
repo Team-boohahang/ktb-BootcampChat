@@ -66,7 +66,11 @@ public class MessageLoader {
         List<Message> sortedMessages = messages.reversed();
         
         var messageIds = sortedMessages.stream().map(Message::getId).toList();
-        messageReadStatusService.updateReadStatus(messageIds, userId);
+        boolean readStatusUpdated =
+                messageReadStatusService.updateReadStatus(roomId, messageIds, userId);
+        if (!readStatusUpdated) {
+            log.warn("Failed to update read status while loading messages for room {}", roomId);
+        }
 
         Map<String, User> usersById = findUsersById(sortedMessages);
         
