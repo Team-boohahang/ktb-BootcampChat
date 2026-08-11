@@ -224,15 +224,62 @@ describe('socketClient', () => {
       sendOn: vi.fn(),
     };
     const client = createSocketClient(service);
-    const payload = { room: 'room-1', type: 'text', content: 'hello' };
+    const payload = {
+      room: 'room-1',
+      type: 'text',
+      content: 'hello',
+      clientMessageId: '18e12ec4-1003-4d22-8c6c-12e626a1f84d',
+    };
 
     const send = client.sendChatMessageAndWait(payload, socket, { timeoutMs: 1000 });
-    socket.emitToClient('message', { id: 'message-1' });
+    socket.emitToClient('message', {
+      id: 'message-1',
+      clientMessageId: payload.clientMessageId,
+    });
 
-    await expect(send).resolves.toEqual({ id: 'message-1' });
+    await expect(send).resolves.toEqual({
+      id: 'message-1',
+      clientMessageId: payload.clientMessageId,
+    });
     expect(service.sendOn).toHaveBeenCalledWith(socket, 'chatMessage', payload);
     expect(socket.listenerCount('message')).toBe(0);
     expect(socket.listenerCount('error')).toBe(0);
+    expect(vi.getTimerCount()).toBe(0);
+    vi.useRealTimers();
+  });
+
+  it('ignores message events with a different clientMessageId', async () => {
+    vi.useFakeTimers();
+    const socket = createEventSocket();
+    const client = createSocketClient({ sendOn: vi.fn() });
+    const clientMessageId = 'c780516a-c2e1-42af-8b43-bbb91c772e91';
+    let settled = false;
+
+    const send = client.sendChatMessageAndWait(
+      { room: 'room-1', type: 'text', content: 'hello', clientMessageId },
+      socket,
+      { timeoutMs: 1000 },
+    );
+    send.finally(() => {
+      settled = true;
+    });
+
+    socket.emitToClient('message', {
+      _id: 'unrelated-message',
+      clientMessageId: '3892338b-e39d-48ed-bbab-e6e9af31c682',
+    });
+    await Promise.resolve();
+
+    expect(settled).toBe(false);
+    expect(socket.listenerCount('message')).toBe(1);
+
+    const response = { _id: 'message-1', clientMessageId };
+    socket.emitToClient('message', response);
+
+    await expect(send).resolves.toBe(response);
+    expect(socket.listenerCount('message')).toBe(0);
+    expect(socket.listenerCount('error')).toBe(0);
+    expect(vi.getTimerCount()).toBe(0);
     vi.useRealTimers();
   });
 
@@ -243,7 +290,12 @@ describe('socketClient', () => {
     const error = new Error('rejected');
 
     const send = client.sendChatMessageAndWait(
-      { room: 'room-1', type: 'text', content: 'hello' },
+      {
+        room: 'room-1',
+        type: 'text',
+        content: 'hello',
+        clientMessageId: 'f0d844d9-d84e-49b3-8e82-1fe09306f558',
+      },
       socket,
       { timeoutMs: 1000 },
     );
@@ -252,6 +304,7 @@ describe('socketClient', () => {
     await expect(send).rejects.toBe(error);
     expect(socket.listenerCount('message')).toBe(0);
     expect(socket.listenerCount('error')).toBe(0);
+    expect(vi.getTimerCount()).toBe(0);
     vi.useRealTimers();
   });
 
@@ -261,9 +314,14 @@ describe('socketClient', () => {
     const client = createSocketClient({ sendOn: vi.fn() });
 
     const send = client.sendChatMessageAndWait(
-      { room: 'room-1', type: 'text', content: 'hello' },
+      {
+        room: 'room-1',
+        type: 'text',
+        content: 'hello',
+        clientMessageId: '69e14aa5-d114-4285-8909-e747f24eb4ea',
+      },
       socket,
-      { timeoutMs: 1000 },
+      { timeoutMs: 1000, maxRetries: 0 },
     );
     const expectation = expect(send).rejects.toThrow('메시지 전송이 지연되고 있습니다. 다시 시도해주세요.');
     await vi.advanceTimersByTimeAsync(1000);
@@ -271,6 +329,92 @@ describe('socketClient', () => {
     await expectation;
     expect(socket.listenerCount('message')).toBe(0);
     expect(socket.listenerCount('error')).toBe(0);
+    expect(vi.getTimerCount()).toBe(0);
+    vi.useRealTimers();
+  });
+
+  it('retries a timed out message with the same clientMessageId and payload', async () => {
+    vi.useFakeTimers();
+    const socket = createEventSocket();
+    const service = { sendOn: vi.fn() };
+    const client = createSocketClient(service);
+    const payload = {
+      room: 'room-1',
+      type: 'text',
+      content: 'retry me',
+      clientMessageId: '67e5f2fe-d16f-4e7e-ae8e-264e5ad45376',
+    };
+
+    const send = client.sendChatMessageAndWait(payload, socket, {
+      timeoutMs: 100,
+      maxRetries: 1,
+      retryDelayMs: 20,
+    });
+
+    await vi.advanceTimersByTimeAsync(120);
+    expect(service.sendOn).toHaveBeenCalledTimes(2);
+    expect(service.sendOn.mock.calls.map(([, , emittedPayload]) => emittedPayload)).toEqual([
+      payload,
+      payload,
+    ]);
+
+    const response = { _id: 'message-1', clientMessageId: payload.clientMessageId };
+    socket.emitToClient('message', response);
+    await expect(send).resolves.toBe(response);
+    expect(socket.listenerCount('message')).toBe(0);
+    expect(vi.getTimerCount()).toBe(0);
+    vi.useRealTimers();
+  });
+
+  it('rejects after the configured retry count is exhausted', async () => {
+    vi.useFakeTimers();
+    const socket = createEventSocket();
+    const service = { sendOn: vi.fn() };
+    const client = createSocketClient(service);
+    const send = client.sendChatMessageAndWait(
+      {
+        room: 'room-1',
+        type: 'text',
+        content: 'never acked',
+        clientMessageId: '53f79fdc-81cf-43cf-bd39-888433e36988',
+      },
+      socket,
+      { timeoutMs: 100, maxRetries: 1, retryDelayMs: 20 },
+    );
+    const expectation = expect(send).rejects.toMatchObject({ code: 'SOCKET_TIMEOUT' });
+
+    await vi.advanceTimersByTimeAsync(220);
+
+    await expectation;
+    expect(service.sendOn).toHaveBeenCalledTimes(2);
+    expect(socket.listenerCount('message')).toBe(0);
+    expect(socket.listenerCount('error')).toBe(0);
+    expect(vi.getTimerCount()).toBe(0);
+    vi.useRealTimers();
+  });
+
+  it('cleans message listeners and timers when the request is aborted', async () => {
+    vi.useFakeTimers();
+    const socket = createEventSocket();
+    const client = createSocketClient({ sendOn: vi.fn() });
+    const controller = new AbortController();
+    const send = client.sendChatMessageAndWait(
+      {
+        room: 'room-1',
+        type: 'text',
+        content: 'cancel me',
+        clientMessageId: '71985cea-bd7d-42ee-85c6-5e6e5b9dfcfe',
+      },
+      socket,
+      { timeoutMs: 1000, signal: controller.signal },
+    );
+
+    controller.abort();
+
+    await expect(send).rejects.toMatchObject({ name: 'AbortError' });
+    expect(socket.listenerCount('message')).toBe(0);
+    expect(socket.listenerCount('error')).toBe(0);
+    expect(vi.getTimerCount()).toBe(0);
     vi.useRealTimers();
   });
 

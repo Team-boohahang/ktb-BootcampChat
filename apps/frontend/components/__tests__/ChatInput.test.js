@@ -3,6 +3,10 @@ import { render, waitFor, fireEvent } from '@testing-library/react';
 import { describe, expect, it, vi } from 'vitest';
 import ChatInput from '../ChatInput';
 
+vi.mock('../EmojiPicker', () => ({
+  default: () => <em-emoji-picker />,
+}));
+
 describe('ChatInput', () => {
   it('renders the lazy emoji picker under React 19', async () => {
     const { container, getByLabelText } = render(
@@ -61,5 +65,32 @@ describe('ChatInput', () => {
     fireEvent.keyDown(input, { key: 'Enter', keyCode: 229 });
 
     expect(onSubmit).not.toHaveBeenCalled();
+  });
+
+  it('submits only once when the send button is clicked rapidly twice', async () => {
+    let resolveSubmit;
+    const onSubmit = vi.fn(() => new Promise(resolve => {
+      resolveSubmit = resolve;
+    }));
+    const { getByTestId } = render(
+      <ChatInput
+        onSubmit={onSubmit}
+        fileInputRef={{ current: null }}
+        room={{ participants: [] }}
+      />
+    );
+    const input = getByTestId('chat-message-input');
+    const sendButton = getByTestId('chat-send-button');
+
+    fireEvent.change(input, { target: { value: 'once only' } });
+    fireEvent.click(sendButton);
+    fireEvent.click(sendButton);
+
+    expect(onSubmit).toHaveBeenCalledTimes(1);
+
+    resolveSubmit();
+    await waitFor(() => {
+      expect(onSubmit).toHaveBeenCalledTimes(1);
+    });
   });
 });

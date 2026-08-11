@@ -64,6 +64,7 @@ export const useChatRoom = ({ roomId, onNavigate, onReplace, asPath }) => {
     uploading,
     uploadProgress,
     uploadError,
+    sending,
     handleMessageSubmit,
     handleLoadMore,
     removeFilePreview,
@@ -177,6 +178,7 @@ export const useChatRoom = ({ roomId, onNavigate, onReplace, asPath }) => {
     uploading,
     uploadProgress,
     uploadError,
+    sending,
     hasMoreMessages,
     loadingMessages,
 

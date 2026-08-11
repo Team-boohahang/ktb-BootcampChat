@@ -26,6 +26,7 @@ const ChatRoomView = ({ roomId, onNavigate, onReplace, asPath }) => {
     currentUser,
     fileInputRef,
     handleMessageSubmit,
+    sending,
     loading,
     error,
     handleReactionAdd,
@@ -181,6 +182,7 @@ const ChatRoomView = ({ roomId, onNavigate, onReplace, asPath }) => {
         onSubmit={handleMessageSubmit}
         fileInputRef={fileInputRef}
         disabled={connectionStatus !== 'connected'}
+        sending={sending}
         room={room}
       />
     </VStack>

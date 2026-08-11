@@ -1,5 +1,6 @@
-import { useCallback } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { Toast } from '@/components/Toast';
+import { createClientMessageId } from '@/lib/socket/clientMessageId';
 import socketClient from '@/lib/socket/socketClient';
 import { useChatFileUpload } from '../files/useChatFileUpload';
 
@@ -12,6 +13,24 @@ export const useMessageHandling = (
   setLoadingMessages,
   socketRef,
 ) => {
+  const [sendingRoomId, setSendingRoomId] = useState(null);
+  const sending = sendingRoomId === roomId;
+  const activeSubmissionRef = useRef(null);
+  const abortControllerRef = useRef(null);
+  const mountedRef = useRef(false);
+
+  useEffect(() => {
+    mountedRef.current = true;
+    activeSubmissionRef.current = null;
+    abortControllerRef.current = new AbortController();
+    return () => {
+      mountedRef.current = false;
+      activeSubmissionRef.current = null;
+      abortControllerRef.current?.abort();
+      abortControllerRef.current = null;
+    };
+  }, [roomId]);
+
  const {
    filePreview,
    uploading,
@@ -63,19 +82,33 @@ export const useMessageHandling = (
   }, [roomId, loadingMessages, messages, setLoadingMessages, canSendOnRoomSocket, getRoomSocket]);
 
  const handleMessageSubmit = useCallback(async (messageData) => {
+   if (activeSubmissionRef.current) {
+     return false;
+   }
+
    const roomSocket = getRoomSocket();
    if (!canSendOnRoomSocket() || !currentUser) {
      Toast.error('채팅 서버와 연결이 끊어졌습니다.');
-     return;
+     return false;
    }
 
    if (!roomId) {
      Toast.error('채팅방 정보를 찾을 수 없습니다.');
-     return;
+     return false;
    }
 
+   const isFileMessage = messageData.type === 'file';
+   if (!isFileMessage && !messageData.content?.trim()) {
+     return false;
+   }
+
+   const submissionToken = Symbol('message-submission');
+   const clientMessageId = createClientMessageId();
+   activeSubmissionRef.current = submissionToken;
+   setSendingRoomId(roomId);
+
    try {
-      if (messageData.type === 'file') {
+      if (isFileMessage) {
         const uploadResponse = await uploadChatFile(
           messageData.fileData.file,
           currentUser
@@ -85,6 +118,7 @@ export const useMessageHandling = (
          room: roomId,
          type: 'file',
          content: messageData.content || '',
+         clientMessageId,
          fileData: {
            _id: uploadResponse.data.file._id,
            filename: uploadResponse.data.file.filename,
@@ -92,24 +126,31 @@ export const useMessageHandling = (
            mimetype: uploadResponse.data.file.mimetype,
            size: uploadResponse.data.file.size
          }
-       }, roomSocket);
+       }, roomSocket, { signal: abortControllerRef.current?.signal });
 
        resetFileUpload();
 
-     } else if (messageData.content?.trim()) {
+     } else {
        await socketClient.sendChatMessageAndWait({
          room: roomId,
          type: 'text',
-         content: messageData.content.trim()
-       }, roomSocket);
+         content: messageData.content.trim(),
+         clientMessageId,
+       }, roomSocket, { signal: abortControllerRef.current?.signal });
      }
 
+     return true;
+
    } catch (error) {
+     if (error?.name === 'AbortError') {
+       return false;
+     }
+
      if (error.message?.includes('세션') ||
          error.message?.includes('인증') ||
          error.message?.includes('토큰')) {
-       await handleSessionError();
-       return;
+       await handleSessionError?.();
+       return false;
      }
 
      // 서버가 거부한 메시지는 onError 핸들러가 이미 토스트로 알렸다.
@@ -120,6 +161,14 @@ export const useMessageHandling = (
      if (messageData.type === 'file') {
        setUploadError(error.message);
        setUploading(false);
+     }
+     return false;
+   } finally {
+     if (activeSubmissionRef.current === submissionToken) {
+       activeSubmissionRef.current = null;
+       if (mountedRef.current) {
+         setSendingRoomId(null);
+       }
      }
    }
  }, [currentUser, roomId, handleSessionError, uploadChatFile, resetFileUpload, setUploadError, setUploading, canSendOnRoomSocket, getRoomSocket]);
@@ -133,6 +182,7 @@ export const useMessageHandling = (
    uploading,
    uploadProgress,
    uploadError,
+   sending,
    setFilePreview,
    handleMessageSubmit,
    handleLoadMore,

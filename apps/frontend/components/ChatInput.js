@@ -18,6 +18,7 @@ const ChatInput = forwardRef(({
   fileInputRef,
   disabled = false,
   uploading: externalUploading = false,
+  sending = false,
   room = null,
 }, ref) => {
   const emojiPickerRef = useRef(null);
@@ -26,6 +27,7 @@ const ChatInput = forwardRef(({
   const internalInputRef = useRef(null);
   const messageInputRef = ref || internalInputRef;
   const isComposingRef = useRef(false);
+  const submitInProgressRef = useRef(false);
 
   const {
     message,
@@ -103,14 +105,30 @@ const ChatInput = forwardRef(({
   const handleSubmit = useCallback(async (e) => {
     e?.preventDefault();
 
-    if (files.length > 0) {
-      try {
+    if (
+      submitInProgressRef.current ||
+      disabled ||
+      uploading ||
+      externalUploading ||
+      sending
+    ) {
+      return;
+    }
+
+    if (files.length === 0 && !message.trim()) {
+      return;
+    }
+
+    submitInProgressRef.current = true;
+
+    try {
+      if (files.length > 0) {
         const file = files[0];
         if (!file || !file.file) {
           throw new Error('파일이 선택되지 않았습니다.');
         }
 
-        onSubmit({
+        const submitPromise = onSubmit({
           type: 'file',
           content: message.trim(),
           fileData: file
@@ -120,21 +138,37 @@ const ChatInput = forwardRef(({
         setShowEmojiPicker(false);
         setShowMentionList(false);
         setFiles([]);
-
-      } catch (error) {
-        console.error('File submit error:', error);
+        await submitPromise;
+      } else {
+        const submitPromise = onSubmit({
+          type: 'text',
+          content: message.trim()
+        });
+        setMessage('');
+        setShowEmojiPicker(false);
+        setShowMentionList(false);
+        await submitPromise;
+      }
+    } catch (error) {
+      console.error('Message submit error:', error);
+      if (files.length > 0) {
         setUploadError(error.message);
       }
-    } else if (message.trim()) {
-      onSubmit({
-        type: 'text',
-        content: message.trim()
-      });
-      setMessage('');
-      setShowEmojiPicker(false);
-      setShowMentionList(false);
+    } finally {
+      submitInProgressRef.current = false;
     }
-  }, [files, message, onSubmit, setMessage, setShowEmojiPicker, setShowMentionList]);
+  }, [
+    disabled,
+    externalUploading,
+    files,
+    message,
+    onSubmit,
+    sending,
+    setMessage,
+    setShowEmojiPicker,
+    setShowMentionList,
+    uploading,
+  ]);
 
   useEffect(() => {
     const handleClickOutside = (event) => {
@@ -371,7 +405,7 @@ const ChatInput = forwardRef(({
     }, 0);
   }, [message, setMessage, setShowEmojiPicker, messageInputRef]);
 
-  const isDisabled = disabled || uploading || externalUploading;
+  const isDisabled = disabled || uploading || externalUploading || sending;
 
   return (
     <>

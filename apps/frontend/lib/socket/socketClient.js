@@ -14,7 +14,37 @@ const ensureConnectedSocket = (socket) => {
   }
 };
 
-const createTimeoutError = (message) => new Error(message);
+const createTimeoutError = (message) => {
+  const error = new Error(message);
+  error.code = 'SOCKET_TIMEOUT';
+  return error;
+};
+
+const createAbortError = () => {
+  const error = new Error('메시지 전송이 취소되었습니다.');
+  error.name = 'AbortError';
+  return error;
+};
+
+const waitForRetryDelay = (delayMs, signal) => new Promise((resolve, reject) => {
+  if (signal?.aborted) {
+    reject(createAbortError());
+    return;
+  }
+
+  let timeoutId;
+  const handleAbort = () => {
+    clearTimeout(timeoutId);
+    signal?.removeEventListener('abort', handleAbort);
+    reject(createAbortError());
+  };
+
+  timeoutId = setTimeout(() => {
+    signal?.removeEventListener('abort', handleAbort);
+    resolve();
+  }, delayMs);
+  signal?.addEventListener('abort', handleAbort, { once: true });
+});
 
 const waitForSocketEvent = ({
   socket,
@@ -22,6 +52,9 @@ const waitForSocketEvent = ({
   errorEvents,
   timeoutMs,
   timeoutMessage,
+  successMatcher = () => true,
+  errorMatcher = () => true,
+  signal,
   send,
 }) => {
   ensureConnectedSocket(socket);
@@ -30,13 +63,14 @@ const waitForSocketEvent = ({
     let timeoutId;
 
     const cleanup = () => {
-      if (timeoutId) {
+      if (timeoutId !== undefined) {
         clearTimeout(timeoutId);
       }
       socket.off(successEvent, handleSuccess);
       for (const event of errorEvents) {
         socket.off(event, handleError);
       }
+      signal?.removeEventListener('abort', handleAbort);
     };
 
     const settle = (callback, value) => {
@@ -44,13 +78,30 @@ const waitForSocketEvent = ({
       callback(value);
     };
 
-    const handleSuccess = (data) => settle(resolve, data);
-    const handleError = (error) => settle(reject, error);
+    const handleSuccess = (data) => {
+      if (successMatcher(data)) {
+        settle(resolve, data);
+      }
+    };
+    const handleError = (error) => {
+      if (errorMatcher(error)) {
+        settle(reject, error);
+      }
+    };
+    const handleAbort = () => settle(reject, createAbortError());
 
-    socket.once(successEvent, handleSuccess);
+    // A matcher may ignore several events before the correlated response arrives,
+    // so these listeners must remain registered until the promise settles.
+    socket.on(successEvent, handleSuccess);
     for (const event of errorEvents) {
-      socket.once(event, handleError);
+      socket.on(event, handleError);
     }
+
+    if (signal?.aborted) {
+      handleAbort();
+      return;
+    }
+    signal?.addEventListener('abort', handleAbort, { once: true });
 
     timeoutId = setTimeout(() => {
       settle(reject, createTimeoutError(timeoutMessage));
@@ -117,15 +168,47 @@ export const createSocketClient = (service = socketService) => ({
   canSend: () => service.isConnected(),
   send: (event, data) => service.send(event, data),
   sendChatMessage: (payload, socket) => sendDomainEvent(service, socket, 'chatMessage', payload),
-  sendChatMessageAndWait: (payload, socket, { timeoutMs = 8000 } = {}) =>
-    waitForSocketEvent({
-      socket,
-      successEvent: 'message',
-      errorEvents: ['error'],
-      timeoutMs,
-      timeoutMessage: '메시지 전송이 지연되고 있습니다. 다시 시도해주세요.',
-      send: () => sendDomainEvent(service, socket, 'chatMessage', payload),
-    }),
+  sendChatMessageAndWait: async (
+    payload,
+    socket,
+    { timeoutMs = 8000, maxRetries = 1, retryDelayMs = 250, signal } = {},
+  ) => {
+    if (!payload?.clientMessageId) {
+      throw new Error('clientMessageId is required');
+    }
+
+    const retryLimit = Number.isFinite(maxRetries)
+      ? Math.min(Math.max(Math.floor(maxRetries), 0), 3)
+      : 1;
+    let attempt = 0;
+    while (true) {
+      try {
+        return await waitForSocketEvent({
+          socket,
+          successEvent: 'message',
+          errorEvents: ['error'],
+          timeoutMs,
+          timeoutMessage: '메시지 전송이 지연되고 있습니다. 다시 시도해주세요.',
+          successMatcher: message => message?.clientMessageId === payload.clientMessageId,
+          // Older server errors do not always contain a clientMessageId. Keep
+          // treating those as relevant, while correlated errors only reject
+          // their own pending request.
+          errorMatcher: error => (
+            !error?.clientMessageId || error.clientMessageId === payload.clientMessageId
+          ),
+          signal,
+          send: () => sendDomainEvent(service, socket, 'chatMessage', payload),
+        });
+      } catch (error) {
+        if (error?.code !== 'SOCKET_TIMEOUT' || attempt >= retryLimit) {
+          throw error;
+        }
+
+        attempt += 1;
+        await waitForRetryDelay(retryDelayMs, signal);
+      }
+    }
+  },
   fetchPreviousMessages: (payload, socket) => sendDomainEvent(service, socket, 'fetchPreviousMessages', payload),
   fetchPreviousMessagesAndWait: (payload, socket, { timeoutMs = 10000 } = {}) =>
     waitForSocketEvent({
