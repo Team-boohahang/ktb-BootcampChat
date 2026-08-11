@@ -3,6 +3,7 @@
 import { useEffect } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
 import LoginPage from '@/components/LoginPage';
+import { getSafeRedirectPath } from '@/lib/auth/safeRedirect';
 
 const LoginRouteContent = () => {
   const router = useRouter();
@@ -19,7 +20,7 @@ const LoginRouteContent = () => {
   return (
     <LoginPage
       router={router}
-      redirectUrl={searchParams.get('redirect') || '/chat'}
+      redirectUrl={getSafeRedirectPath(searchParams.get('redirect'))}
     />
   );
 };

@@ -2,6 +2,7 @@ import React from 'react';
 import { useRouter } from 'next/router';
 import { withoutAuth } from '@/contexts/AuthContext';
 import LoginPage from '@/components/LoginPage';
+import { getSafeRedirectPath } from '@/lib/auth/safeRedirect';
 
 export const Login = () => {
   const router = useRouter();
@@ -9,7 +10,7 @@ export const Login = () => {
   return (
     <LoginPage
       router={router}
-      redirectUrl={router.query.redirect || '/chat'}
+      redirectUrl={getSafeRedirectPath(router.query.redirect)}
     />
   );
 };
