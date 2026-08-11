@@ -82,10 +82,9 @@ const ChatMessages = ({
     return (
       <div
         key={msg._id}
-        style={{
-          contentVisibility: 'auto',
-          containIntrinsicSize: '1px 96px',
-        }}
+        className="chat-message-item"
+        data-testid="chat-message-item"
+        data-message-id={msg._id}
       >
       <MessageComponent
         {...commonProps}
@@ -102,6 +101,7 @@ const ChatMessages = ({
     <VStack
       ref={containerRef}
       className="h-full overflow-y-auto overflow-x-hidden [overflow-scrolling:touch]"
+      style={{ scrollbarGutter: 'stable' }}
       $css={{
         gap: '$200',
         padding: '$300',

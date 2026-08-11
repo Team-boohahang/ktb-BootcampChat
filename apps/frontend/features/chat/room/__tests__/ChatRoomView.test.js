@@ -3,37 +3,17 @@ import { render, screen } from '@testing-library/react';
 import { describe, expect, it, vi } from 'vitest';
 import ChatRoomView from '../ChatRoomView';
 
-vi.mock('../useChatRoom', () => ({
-  useChatRoom: () => ({
+const mocks = vi.hoisted(() => ({
+  chatRoom: {
     room: { _id: 'room-1', name: '테스트방', participants: [] },
     messages: [],
-    streamingMessages: {},
     connected: false,
     connectionStatus: 'disconnected',
     messageLoadError: null,
     retryMessageLoad: vi.fn(),
     currentUser: { _id: 'user-1', name: 'Tester' },
-    message: '',
-    showEmojiPicker: false,
-    showMentionList: false,
-    mentionFilter: '',
-    mentionIndex: 0,
-    filePreview: null,
     fileInputRef: { current: null },
-    messageInputRef: { current: null },
-    socketRef: { current: null },
-    handleMessageChange: vi.fn(),
     handleMessageSubmit: vi.fn(),
-    handleEmojiToggle: vi.fn(),
-    setMessage: vi.fn(),
-    setShowEmojiPicker: vi.fn(),
-    setShowMentionList: vi.fn(),
-    setMentionFilter: vi.fn(),
-    setMentionIndex: vi.fn(),
-    handleKeyDown: vi.fn(),
-    removeFilePreview: vi.fn(),
-    getFilteredParticipants: () => [],
-    insertMention: vi.fn(),
     loading: false,
     error: null,
     handleReactionAdd: vi.fn(),
@@ -41,7 +21,11 @@ vi.mock('../useChatRoom', () => ({
     loadingMessages: false,
     hasMoreMessages: false,
     handleLoadMore: vi.fn(),
-  }),
+  },
+}));
+
+vi.mock('../useChatRoom', () => ({
+  useChatRoom: () => mocks.chatRoom,
 }));
 
 vi.mock('@/components/ChatRoomInfo', () => ({
@@ -64,5 +48,38 @@ describe('ChatRoomView', () => {
     expect(screen.getByText('chat messages')).toBeInTheDocument();
     expect(screen.getByText('room info: disconnected')).toBeInTheDocument();
     expect(screen.queryByText(/연결이 끊어졌습니다/)).not.toBeInTheDocument();
+  });
+
+  it('uses the same viewport-height shell while the room is loading', () => {
+    mocks.chatRoom = {
+      ...mocks.chatRoom,
+      room: null,
+      loading: true,
+    };
+
+    render(<ChatRoomView roomId="room-1" onNavigate={vi.fn()} onReplace={vi.fn()} asPath="/chat/room-1" />);
+
+    expect(screen.getByTestId('chat-room-shell')).toHaveStyle({
+      height: 'calc(100dvh - 80px)',
+      minHeight: '0',
+    });
+    expect(screen.getByLabelText('채팅방 연결 중')).toBeInTheDocument();
+  });
+
+  it('keeps messages in place while showing a message loading error overlay', () => {
+    mocks.chatRoom = {
+      ...mocks.chatRoom,
+      room: { _id: 'room-1', name: '테스트방', participants: [] },
+      loading: false,
+      messageLoadError: new Error('메시지 로드 실패'),
+    };
+
+    render(<ChatRoomView roomId="room-1" onNavigate={vi.fn()} onReplace={vi.fn()} asPath="/chat/room-1" />);
+
+    expect(screen.getByText('chat messages')).toBeInTheDocument();
+    expect(screen.getByTestId('message-load-error-overlay')).toHaveStyle({
+      position: 'absolute',
+    });
+    expect(screen.getByRole('button', { name: '메시지 다시 로드' })).toBeInTheDocument();
   });
 });

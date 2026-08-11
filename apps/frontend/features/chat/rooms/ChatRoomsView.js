@@ -192,63 +192,84 @@ export default function ChatRoomsView({ router }) {
           </HStack>
         </VStack>
 
-        
-        {error && (
-          <Callout.Root
-            colorPalette={error.type === 'danger' ? 'danger' : error.type === 'warning' ? 'warning' : 'primary'}
-          >
-            <HStack $css={{ gap: '$200', alignItems: 'flex-start' }}>
-              <Callout.Icon>
-                {connectionStatus === CONNECTION_STATUS.ERROR ? (
-                  <NetworkIcon size={18} />
-                ) : (
-                  <ErrorCircleIcon size={18} />
-                )}
-              </Callout.Icon>
-              <VStack $css={{ gap: '$150', alignItems: 'flex-start' }}>
-                <Text typography="subtitle2" style={{ fontWeight: 500 }}>{error.title}</Text>
-                <Text typography="body2">{error.message}</Text>
-                {error.showRetry && !isRetrying && (
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    onClick={() => fetchRooms()}
-                  >
-                    다시 시도
-                  </Button>
-                )}
-              </VStack>
-            </HStack>
-          </Callout.Root>
-        )}
-
-        {connectionStatus === CONNECTION_STATUS.ERROR ? (
-          <ConnectionErrorBanner message="채팅 서버와 연결할 수 없습니다. 잠시 후 다시 시도해주세요." />
-        ) : loading ? (
-          <Box $css={{ padding: '$400' }}>
-            <LoadingIndicator text="채팅방 목록을 불러오는 중..." />
-          </Box>
-        ) : rooms.length > 0 ? (
-          <RoomsTable
-            rooms={rooms}
-            connectionStatus={connectionStatus}
-            onJoinRoom={handleJoinRoom}
-          />
-        ) : !error && (
-          <VStack
-            $css={{ gap: '$300', alignItems: 'center', padding: '$400' }}
-            data-testid="rooms-empty"
-          >
-            <Text typography="body1">생성된 채팅방이 없습니다.</Text>
-            <Button
-              colorPalette="primary"
-              onClick={() => router.push('/chat/new')}
-              disabled={connectionStatus !== CONNECTION_STATUS.CONNECTED}
+        <Box
+          data-testid="room-list-content-slot"
+          style={{ height: '430px', minHeight: '430px', position: 'relative' }}
+          $css={{
+            display: 'flex',
+            flexDirection: 'column',
+            justifyContent: 'center',
+            width: '100%',
+          }}
+        >
+          {error && connectionStatus !== CONNECTION_STATUS.ERROR && (
+            <Box
+              data-testid="rooms-error-overlay"
+              style={{
+                position: 'absolute',
+                top: 'var(--vapor-space-200)',
+                left: 'var(--vapor-space-200)',
+                right: 'var(--vapor-space-200)',
+                zIndex: 2,
+              }}
             >
-              새 채팅방 만들기
-            </Button>
-          </VStack>
-        )}
+              <Callout.Root
+                colorPalette={error.type === 'danger' ? 'danger' : error.type === 'warning' ? 'warning' : 'primary'}
+              >
+                <HStack $css={{ gap: '$200', alignItems: 'flex-start' }}>
+                  <Callout.Icon>
+                    {connectionStatus === CONNECTION_STATUS.ERROR ? (
+                      <NetworkIcon size={18} />
+                    ) : (
+                      <ErrorCircleIcon size={18} />
+                    )}
+                  </Callout.Icon>
+                  <VStack $css={{ gap: '$150', alignItems: 'flex-start' }}>
+                    <Text typography="subtitle2" style={{ fontWeight: 500 }}>{error.title}</Text>
+                    <Text typography="body2">{error.message}</Text>
+                    {error.showRetry && !isRetrying && (
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        onClick={() => fetchRooms()}
+                      >
+                        다시 시도
+                      </Button>
+                    )}
+                  </VStack>
+                </HStack>
+              </Callout.Root>
+            </Box>
+          )}
+
+          {connectionStatus === CONNECTION_STATUS.ERROR ? (
+            <ConnectionErrorBanner message="채팅 서버와 연결할 수 없습니다. 잠시 후 다시 시도해주세요." />
+          ) : loading ? (
+            <Box $css={{ padding: '$400' }}>
+              <LoadingIndicator text="채팅방 목록을 불러오는 중..." />
+            </Box>
+          ) : rooms.length > 0 ? (
+            <RoomsTable
+              rooms={rooms}
+              connectionStatus={connectionStatus}
+              onJoinRoom={handleJoinRoom}
+            />
+          ) : !error && (
+            <VStack
+              $css={{ gap: '$300', alignItems: 'center', padding: '$400' }}
+              data-testid="rooms-empty"
+            >
+              <Text typography="body1">생성된 채팅방이 없습니다.</Text>
+              <Button
+                colorPalette="primary"
+                onClick={() => router.push('/chat/new')}
+                disabled={connectionStatus !== CONNECTION_STATUS.CONNECTED}
+              >
+                새 채팅방 만들기
+              </Button>
+            </VStack>
+          )}
+        </Box>
       </VStack>
     </Box>
   );
