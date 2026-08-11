@@ -5,3 +5,6 @@ uploads/*
 .project
 .factorypath
 .settings/
+
+.env
+docs/
