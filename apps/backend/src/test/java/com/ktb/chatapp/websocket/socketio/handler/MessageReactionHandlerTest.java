@@ -11,6 +11,7 @@ import com.ktb.chatapp.websocket.socketio.SocketUser;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.LinkedHashSet;
+import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
@@ -30,7 +31,7 @@ import org.springframework.data.mongodb.core.query.Query;
 import org.springframework.data.mongodb.core.query.Update;
 
 import static com.ktb.chatapp.websocket.socketio.SocketIOEvents.ERROR;
-import static com.ktb.chatapp.websocket.socketio.SocketIOEvents.MESSAGE_REACTION_UPDATE;
+import static com.ktb.chatapp.websocket.socketio.SocketIOEvents.MESSAGE_REACTION_UPDATES;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
@@ -91,6 +92,7 @@ class MessageReactionHandlerTest {
                 any(FindAndModifyOptions.class),
                 eq(Message.class))).thenReturn(message);
         when(socketIOServer.getRoomOperations("room-1")).thenReturn(roomOperations);
+        when(roomOperations.getClients()).thenReturn(List.of(client));
 
         handler.handleMessageReaction(client, request);
 
@@ -107,8 +109,8 @@ class MessageReactionHandlerTest {
         verify(messageRepository, never()).save(any());
 
         ArgumentCaptor<Object> responseCaptor = ArgumentCaptor.forClass(Object.class);
-        verify(roomOperations, timeout(500)).sendEvent(eq(MESSAGE_REACTION_UPDATE), responseCaptor.capture());
-        MessageReactionResponse response = (MessageReactionResponse) responseCaptor.getValue();
+        verify(roomOperations, timeout(500)).sendEvent(eq(MESSAGE_REACTION_UPDATES), responseCaptor.capture());
+        MessageReactionResponse response = reactionAt(responseCaptor.getValue(), 0);
         assertEquals("message-1", response.getMessageId());
         assertEquals(Set.of("user-1"), response.getReactions().get("👍"));
     }
@@ -154,6 +156,7 @@ class MessageReactionHandlerTest {
                 any(FindAndModifyOptions.class),
                 eq(Message.class))).thenReturn(first, second);
         when(socketIOServer.getRoomOperations("room-1")).thenReturn(roomOperations);
+        when(roomOperations.getClients()).thenReturn(List.of(client));
 
         when(client.get("user"))
                 .thenReturn(new SocketUser("user-1", "tester", "session-1", "socket-1"))
@@ -165,8 +168,8 @@ class MessageReactionHandlerTest {
         verify(messageRepository, never()).save(any());
         ArgumentCaptor<Object> responseCaptor = ArgumentCaptor.forClass(Object.class);
         verify(roomOperations, timeout(500).times(1))
-                .sendEvent(eq(MESSAGE_REACTION_UPDATE), responseCaptor.capture());
-        MessageReactionResponse response = (MessageReactionResponse) responseCaptor.getValue();
+                .sendEvent(eq(MESSAGE_REACTION_UPDATES), responseCaptor.capture());
+        MessageReactionResponse response = reactionAt(responseCaptor.getValue(), 0);
         assertEquals(Set.of("user-1", "user-2"), response.getReactions().get("👍"));
     }
 
@@ -194,6 +197,7 @@ class MessageReactionHandlerTest {
                             .build();
                 });
         when(socketIOServer.getRoomOperations("room-1")).thenReturn(roomOperations);
+        when(roomOperations.getClients()).thenReturn(List.of(client));
 
         for (int i = 0; i < 10; i++) {
             handler.handleMessageReaction(client, request);
@@ -201,11 +205,12 @@ class MessageReactionHandlerTest {
 
         ArgumentCaptor<Object> responseCaptor = ArgumentCaptor.forClass(Object.class);
         verify(roomOperations, timeout(800).times(1))
-                .sendEvent(eq(MESSAGE_REACTION_UPDATE), responseCaptor.capture());
-        MessageReactionResponse response = (MessageReactionResponse) responseCaptor.getValue();
+                .sendEvent(eq(MESSAGE_REACTION_UPDATES), responseCaptor.capture());
+        MessageReactionResponse response = reactionAt(responseCaptor.getValue(), 0);
         assertEquals(10, response.getReactions().get("👍").size());
         assertEquals(10, handler.reactionChangesApplied());
         assertEquals(1, handler.reactionBroadcastEmits());
+        assertEquals(1, handler.reactionBatchMessages());
         assertEquals(9, handler.coalescedReactionUpdates());
         verify(mongoTemplate, times(10)).findAndModify(
                 any(Query.class),
@@ -227,15 +232,19 @@ class MessageReactionHandlerTest {
                         message("message-2", "room-1", Set.of("user-1")),
                         message("message-3", "room-1", Set.of("user-1")));
         when(socketIOServer.getRoomOperations("room-1")).thenReturn(roomOperations);
+        when(roomOperations.getClients()).thenReturn(List.of(client));
 
         handler.handleMessageReaction(client, new MessageReactionRequest("👍", "message-1", "add", "👍"));
         handler.handleMessageReaction(client, new MessageReactionRequest("👍", "message-2", "add", "👍"));
         handler.handleMessageReaction(client, new MessageReactionRequest("👍", "message-3", "add", "👍"));
 
-        verify(roomOperations, timeout(800).times(3))
-                .sendEvent(eq(MESSAGE_REACTION_UPDATE), any());
+        ArgumentCaptor<Object> responseCaptor = ArgumentCaptor.forClass(Object.class);
+        verify(roomOperations, timeout(800).times(1))
+                .sendEvent(eq(MESSAGE_REACTION_UPDATES), responseCaptor.capture());
+        assertEquals(3, reactionList(responseCaptor.getValue()).size());
         assertEquals(3, handler.reactionChangesApplied());
-        assertEquals(3, handler.reactionBroadcastEmits());
+        assertEquals(1, handler.reactionBroadcastEmits());
+        assertEquals(3, handler.reactionBatchMessages());
         assertEquals(0, handler.coalescedReactionUpdates());
     }
 
@@ -254,16 +263,17 @@ class MessageReactionHandlerTest {
                         message("message-1", "room-1", Set.of("user-1")),
                         message("message-1", "room-1", Set.of("user-1", "user-2")));
         when(socketIOServer.getRoomOperations("room-1")).thenReturn(roomOperations);
+        when(roomOperations.getClients()).thenReturn(List.of(client));
 
         handler.handleMessageReaction(client, request);
         verify(roomOperations, timeout(800).times(1))
-                .sendEvent(eq(MESSAGE_REACTION_UPDATE), any());
+                .sendEvent(eq(MESSAGE_REACTION_UPDATES), any());
 
         Thread.sleep(150);
         handler.handleMessageReaction(client, request);
 
         verify(roomOperations, timeout(800).times(2))
-                .sendEvent(eq(MESSAGE_REACTION_UPDATE), any());
+                .sendEvent(eq(MESSAGE_REACTION_UPDATES), any());
         assertEquals(2, handler.reactionChangesApplied());
         assertEquals(2, handler.reactionBroadcastEmits());
         assertEquals(0, handler.coalescedReactionUpdates());
@@ -287,6 +297,7 @@ class MessageReactionHandlerTest {
                 any(FindAndModifyOptions.class),
                 eq(Message.class))).thenReturn(message);
         when(socketIOServer.getRoomOperations("room-1")).thenReturn(roomOperations);
+        when(roomOperations.getClients()).thenReturn(List.of(client));
 
         handler.handleMessageReaction(client, request);
 
@@ -298,7 +309,7 @@ class MessageReactionHandlerTest {
                 eq(Message.class));
         Document pull = updateCaptor.getValue().getUpdateObject().get("$pull", Document.class);
         assertEquals("user-1", pull.get("reactions.👍"));
-        verify(roomOperations, timeout(500)).sendEvent(eq(MESSAGE_REACTION_UPDATE), any());
+        verify(roomOperations, timeout(500)).sendEvent(eq(MESSAGE_REACTION_UPDATES), any());
     }
 
     @Test
@@ -327,5 +338,14 @@ class MessageReactionHandlerTest {
                 .roomId(roomId)
                 .reactions(Map.of("👍", users))
                 .build();
+    }
+
+    @SuppressWarnings("unchecked")
+    private List<MessageReactionResponse> reactionList(Object value) {
+        return (List<MessageReactionResponse>) value;
+    }
+
+    private MessageReactionResponse reactionAt(Object value, int index) {
+        return reactionList(value).get(index);
     }
 }

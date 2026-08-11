@@ -93,6 +93,7 @@ export const useChatRoom = ({ roomId, onNavigate, onReplace, asPath }) => {
         socketRef.current.off('participantsUpdate');
         socketRef.current.off('messagesRead');
         socketRef.current.off('messageReactionUpdate');
+        socketRef.current.off('messageReactionUpdates');
         socketRef.current.off('session_ended');
         socketRef.current.off('error');
       }

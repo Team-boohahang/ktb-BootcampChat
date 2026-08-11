@@ -72,6 +72,7 @@ const roomEventMap = {
   message: 'onMessage',
   previousMessagesLoaded: 'onPreviousMessagesLoaded',
   messageReactionUpdate: 'onMessageReactionUpdate',
+  messageReactionUpdates: 'onMessageReactionUpdates',
   session_ended: 'onSessionEnded',
   error: 'onError',
 };

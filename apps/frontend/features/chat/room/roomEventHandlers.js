@@ -167,6 +167,10 @@ export const createRoomEventHandlers = ({
       if (!mountedRef.current) return;
       handleReactionUpdate(data);
     },
+    onMessageReactionUpdates: (updates) => {
+      if (!mountedRef.current || !Array.isArray(updates)) return;
+      updates.forEach(update => handleReactionUpdate(update));
+    },
     onSessionEnded: () => {
       if (!mountedRef.current) return;
       cleanup();

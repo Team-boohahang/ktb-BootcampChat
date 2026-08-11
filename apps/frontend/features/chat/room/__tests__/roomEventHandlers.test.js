@@ -186,6 +186,7 @@ describe('roomEventHandlers', () => {
     vi.runAllTimers();
     handlers.onPreviousMessagesLoaded({ messages: [{ _id: 'message-2' }], hasMore: true });
     handlers.onMessageReactionUpdate({ messageId: 'message-1' });
+    handlers.onMessageReactionUpdates([{ messageId: 'message-3' }, { messageId: 'message-4' }]);
     handlers.onSessionEnded();
     handlers.onError({ code: 'MESSAGE_REJECTED', message: 'blocked' });
 
@@ -194,6 +195,8 @@ describe('roomEventHandlers', () => {
     expect(processMessages).toHaveBeenCalledWith([{ _id: 'message-2' }], true, true);
     expect(setLoadingMessages).toHaveBeenCalledWith(false);
     expect(handleReactionUpdate).toHaveBeenCalledWith({ messageId: 'message-1' });
+    expect(handleReactionUpdate).toHaveBeenCalledWith({ messageId: 'message-3' });
+    expect(handleReactionUpdate).toHaveBeenCalledWith({ messageId: 'message-4' });
     expect(cleanup).toHaveBeenCalledTimes(1);
     expect(logout).toHaveBeenCalledTimes(1);
     expect(onReplace).toHaveBeenCalledWith('/?error=session_expired');

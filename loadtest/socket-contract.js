@@ -18,6 +18,7 @@ module.exports = {
     PARTICIPANTS_UPDATE: 'participantsUpdate', // Payload: List<UserDto>
     MESSAGES_READ: 'messagesRead', // Payload: { userId, messageIds }
     MESSAGE_REACTION_UPDATE: 'messageReactionUpdate', // Payload: { messageId, reactions }
+    MESSAGE_REACTION_UPDATES: 'messageReactionUpdates', // Payload: [{ messageId, reactions }]
     SESSION_ENDED: 'session_ended', // Payload: { reason, message } — snake_case가 서버 원문
   },
 };

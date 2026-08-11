@@ -124,6 +124,12 @@ public final class SocketIOEvents {
     public static final String MESSAGE_REACTION_UPDATE = "messageReactionUpdate";
 
     /**
+     * 메시지 리액션 업데이트 배치
+     * Payload: [{ messageId, reactions }]
+     */
+    public static final String MESSAGE_REACTION_UPDATES = "messageReactionUpdates";
+
+    /**
      * 중복 로그인 감지
      * Payload: { type, deviceInfo, ipAddress, timestamp }
      */
