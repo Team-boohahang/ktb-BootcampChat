@@ -116,10 +116,16 @@ tail -f logs/app.log
    MONGO_URI=mongodb://localhost:27017/bootcamp-chat
    REDIS_HOST=localhost
    REDIS_PORT=6379
+   REDIS_PASSWORD=
 
    # 서버 포트
    PORT=5001
    WS_PORT=5002
+
+   # Socket.IO store
+   # 단일 인스턴스: memory
+   # 멀티 인스턴스: redis
+   SOCKETIO_STORE_TYPE=memory
 
    # OpenAI API
    OPENAI_API_KEY=sk-...
@@ -147,6 +153,37 @@ docker image inspect ktb-chat-backend:java25 --format '{{json .Config.ExposedPor
 
 - `5001/tcp`: HTTP API, Swagger UI, Actuator endpoints
 - `5002/tcp`: Socket.IO server
+
+### Socket.IO 단일/멀티 인스턴스 설정
+
+단일 인스턴스 배포는 기본값인 `SOCKETIO_STORE_TYPE=memory`를 사용합니다. room, connected user, reconnect room 상태가 해당 프로세스 메모리에만 존재하므로 구조가 단순하고 Redis Pub/Sub 비용이 없습니다.
+
+멀티 인스턴스 배포는 모든 앱 노드에서 아래 값을 동일하게 설정합니다.
+
+```bash
+SOCKETIO_STORE_TYPE=redis
+REDIS_HOST=<shared-redis-private-host>
+REDIS_PORT=6379
+REDIS_PASSWORD=<password-or-empty>
+```
+
+이 모드에서는 netty-socketio room broadcast가 Redis Pub/Sub을 통해 다른 앱 노드로 전파됩니다. ALB/Nginx 같은 로드밸런서는 WebSocket 연결 유지와 polling fallback 안정성을 위해 Sticky Session을 켜야 합니다. Sticky Session은 연결이 같은 앱 노드에 머물게 하는 설정이고, Redis Pub/Sub은 서로 다른 앱 노드에 붙은 클라이언트 사이의 이벤트 전파를 담당합니다.
+
+검증 순서:
+
+```bash
+# 1. 모든 앱 노드가 같은 Redis를 바라보는지 확인
+redis-cli -h "$REDIS_HOST" -p "$REDIS_PORT" ping
+
+# 2. 각 앱 노드 로그에서 Redis store 활성화 확인
+journalctl -u ktb-backend.service -n 100 --no-pager | grep 'Socket.IO store factory'
+
+# 3. 부하테스트 중 지표 확인
+# connected 수, connection error 수, disconnect 사유, messages sent/received 비율,
+# message error, average/P95/P99 latency를 기록
+```
+
+운영 구조와 테스트 시나리오는 `docs/SOCKETIO_SCALE_GUIDE.md`에 정리되어 있습니다.
 
 ### 디렉토리 구조
 

@@ -91,8 +91,10 @@ make verify-java
 | `MONGO_URI` | ✅ | 없음 | MongoDB 연결 문자열              |
 | `REDIS_HOST` | ✅ | 없음 | Redis 호스트                    |
 | `REDIS_PORT` | ✅ | 없음 | Redis 포트                      |
+| `REDIS_PASSWORD` | ❌ | 빈 값 | Redis 비밀번호. 로컬 Docker Redis는 비워둠 |
 | `PORT` | ❌ | `5001` | HTTP API 포트 (`server.port`) |
 | `WS_PORT` | ❌ | `5002` | Socket.IO 서버 포트             |
+| `SOCKETIO_STORE_TYPE` | ❌ | `memory` | Socket.IO store 방식. 단일 인스턴스는 `memory`, 멀티 인스턴스는 `redis` |
 | `CORS_ALLOWED_ORIGINS` | ❌ | `*` | REST API CORS 허용 Origin 목록. 쉼표로 구분 |
 | `SOCKETIO_SERVER_ORIGIN` | ❌ | `*` | Socket.IO 허용 Origin. Netty Socket.IO 설정은 단일 Origin 값을 사용 |
 | `MANAGEMENT_HEALTH_SHOW_DETAILS` | ❌ | `when_authorized` | Actuator health 상세 노출 수준 |
@@ -126,6 +128,27 @@ make test     # 단위/통합 테스트 실행
 java -jar target/ktb-chat-backend-0.0.1-SNAPSHOT.jar
 ```
 기본 포트는 HTTP `5001`, Socket.IO `5002`입니다.
+
+## Socket.IO 스케일 모드
+
+기본값은 단일 인스턴스용 `memory` store입니다.
+
+```env
+SOCKETIO_STORE_TYPE=memory
+```
+
+백엔드 인스턴스를 2대 이상 실행할 때는 모든 인스턴스가 같은 Redis를 바라보도록 `redis` store를 켭니다.
+
+```env
+SOCKETIO_STORE_TYPE=redis
+REDIS_HOST=redis-private-host
+REDIS_PORT=6379
+REDIS_PASSWORD=
+```
+
+`redis` 모드에서는 netty-socketio의 `RedissonStoreFactory`를 사용해 room broadcast를 Redis Pub/Sub으로 전파합니다. 따라서 한 인스턴스에서 발생한 `message`, `messagesRead`, `participantsUpdate`, room list 이벤트가 다른 인스턴스에 연결된 같은 room 클라이언트에도 전달될 수 있습니다.
+
+자세한 단일/멀티 인스턴스 운영 구조와 검증 절차는 `docs/SOCKETIO_SCALE_GUIDE.md`를 확인하세요.
 
 ## Docker 이미지
 

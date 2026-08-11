@@ -40,9 +40,11 @@ class ConnectionLoginHandlerTest {
 
     @Test
     void onConnect_setsUserRejoinsRoomsStoresUserAndJoinsUserRooms() {
-        SocketUser user = new SocketUser("user-1", "tester", "session-1", "socket-1");
+        UUID socketId = UUID.randomUUID();
+        SocketUser user = new SocketUser("user-1", "tester", "session-1", socketId.toString());
         when(connectedUsers.get(user.id())).thenReturn(null);
         when(client.get("user")).thenReturn(user);
+        when(client.getSessionId()).thenReturn(socketId);
         when(userRooms.get(user.id())).thenReturn(Set.of("room-1", "room-2"));
 
         handler.onConnect(client, user);
@@ -51,7 +53,7 @@ class ConnectionLoginHandlerTest {
         verify(roomJoinHandler).handleJoinRoom(client, "room-1");
         verify(roomJoinHandler).handleJoinRoom(client, "room-2");
         verify(connectedUsers).set(user.id(), user);
-        verify(client).joinRooms(Set.of("user:" + user.id(), "room-list"));
+        verify(client).joinRooms(Set.of("user:" + user.id(), "socket:" + socketId, "room-list"));
     }
 
     @Test
@@ -68,7 +70,7 @@ class ConnectionLoginHandlerTest {
         verify(client).leaveRoom("room-1");
         verify(userRooms).clear(user.id());
         verify(connectedUsers).del(user.id());
-        verify(client).leaveRooms(Set.of("user:" + user.id(), "room-list"));
+        verify(client).leaveRooms(Set.of("user:" + user.id(), "socket:" + socketId, "room-list"));
         verify(client).del("user");
     }
 }
