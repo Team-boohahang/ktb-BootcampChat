@@ -15,6 +15,7 @@ import java.util.Map;
 import java.util.stream.Collectors;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.data.domain.Pageable;
@@ -34,6 +35,9 @@ public class MessageLoader {
     private final MessageReadStatusService messageReadStatusService;
 
     private static final int BATCH_SIZE = 30;
+
+    @Value("${PERF_CHAT_MESSAGE_SLOW_THRESHOLD_MS:${perf.chat-message.slow-threshold-ms:100}}")
+    private long perfSlowThresholdMs = 100;
 
     /**
      * 메시지 로드
@@ -55,33 +59,86 @@ public class MessageLoader {
             int limit,
             LocalDateTime before,
             String userId) {
+        long startedAt = System.nanoTime();
+        long messagesQueryMs = 0;
+        long sortAndIdsMs = 0;
+        long readStatusUpdateMs = 0;
+        long senderQueryMs = 0;
+        long mappingMs = 0;
+        long hasMoreMs = 0;
+        int messageCount = 0;
+        int senderCount = 0;
+        long fileMessageCount = 0;
+
         Pageable pageable = PageRequest.of(0, limit, Sort.by("timestamp").descending());
 
+        long stepStartedAt = System.nanoTime();
         Page<Message> messagePage = messageRepository
                 .findByRoomIdAndTimestampBefore(roomId, before, pageable);
+        messagesQueryMs = elapsedMillis(stepStartedAt);
 
         List<Message> messages = messagePage.getContent();
+        messageCount = messages.size();
 
+        stepStartedAt = System.nanoTime();
         // DESC로 조회했으므로 ASC로 재정렬 (채팅 UI 표시 순서)
         List<Message> sortedMessages = messages.reversed();
         
         var messageIds = sortedMessages.stream().map(Message::getId).toList();
-        boolean readStatusUpdated =
-                messageReadStatusService.updateReadStatus(roomId, messageIds, userId);
-        if (!readStatusUpdated) {
-            log.warn("Failed to update read status while loading messages for room {}", roomId);
-        }
+        senderCount = (int) sortedMessages.stream()
+                  .map(Message::getSenderId)
+                  .filter(id -> id != null && !id.isBlank())
+                  .distinct()
+                  .count();
 
+        fileMessageCount = sortedMessages.stream()
+                  .filter(message -> message.getFileId() != null && !message.getFileId().isBlank())
+                  .count();
+
+        sortAndIdsMs = elapsedMillis(stepStartedAt);
+
+        stepStartedAt = System.nanoTime();
+
+        boolean readStatusUpdated =
+                messageReadStatusService.updateReadStatus(
+                        roomId,
+                        messageIds,
+                        userId
+                );
+
+        readStatusUpdateMs = elapsedMillis(stepStartedAt);
+
+        if (!readStatusUpdated) {
+            log.warn(
+                "Failed to update read status while loading messages for room {}",
+                roomId
+            );
+        }
+               
+
+        stepStartedAt = System.nanoTime();
         Map<String, User> usersById = findUsersById(sortedMessages);
+        senderQueryMs = elapsedMillis(stepStartedAt);
         
         // 메시지 응답 생성
+        stepStartedAt = System.nanoTime();
         List<MessageResponse> messageResponses = sortedMessages.stream()
                 .map(message -> messageResponseMapper.mapToMessageResponse(
                         message,
                         usersById.get(message.getSenderId())))
                 .collect(Collectors.toList());
+        mappingMs = elapsedMillis(stepStartedAt);
 
+        stepStartedAt = System.nanoTime();
         boolean hasMore = messagePage.hasNext();
+        hasMoreMs = elapsedMillis(stepStartedAt);
+
+        long totalMs = elapsedMillis(startedAt);
+        if (totalMs >= perfSlowThresholdMs) {
+            log.info("[PERF][messageLoader] status=success totalMs={} messagesQueryMs={} sortAndIdsMs={} readStatusUpdateMs={} senderQueryMs={} mappingMs={} hasMoreMs={} messageCount={} senderCount={} fileMessageCount={} roomId={} userId={}",
+                    totalMs, messagesQueryMs, sortAndIdsMs, readStatusUpdateMs, senderQueryMs,
+                    mappingMs, hasMoreMs, messageCount, senderCount, fileMessageCount, roomId, userId);
+        }
 
         log.debug("Messages loaded - roomId: {}, limit: {}, count: {}, hasMore: {}",
                 roomId, limit, messageResponses.size(), hasMore);
@@ -110,5 +167,9 @@ public class MessageLoader {
         userRepository.findAllById(senderIds)
                 .forEach(user -> usersById.put(user.getId(), user));
         return usersById;
+    }
+
+    private static long elapsedMillis(long startedAt) {
+        return (System.nanoTime() - startedAt) / 1_000_000;
     }
 }

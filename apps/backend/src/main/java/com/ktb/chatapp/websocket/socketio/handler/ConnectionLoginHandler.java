@@ -15,6 +15,7 @@ import java.util.Set;
 import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.TimeUnit;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.stereotype.Component;
 
@@ -29,7 +30,6 @@ import static com.ktb.chatapp.websocket.socketio.SocketIOEvents.*;
 @Component
 @ConditionalOnProperty(name = "socketio.enabled", havingValue = "true", matchIfMissing = true)
 public class ConnectionLoginHandler {
-
     private static final String USER_ROOM_PREFIX = "user:";
     private static final String SOCKET_SESSION_ROOM_PREFIX = "socket:";
     private static final String ROOM_LIST_ROOM = "room-list";
@@ -39,6 +39,9 @@ public class ConnectionLoginHandler {
     private final UserRooms userRooms;
     private final RoomJoinHandler roomJoinHandler;
     private final ScheduledExecutorService duplicateLoginScheduler;
+
+    @Value("${PERF_CHAT_MESSAGE_SLOW_THRESHOLD_MS:${perf.chat-message.slow-threshold-ms:100}}")
+    private long perfSlowThresholdMs = 100;
 
     public ConnectionLoginHandler(
             SocketIOServer socketIOServer,
@@ -63,30 +66,61 @@ public class ConnectionLoginHandler {
      * auth 처리가 선행되어야 해서 @OnConnect 대신 별도 메서드로 구현
      */
     public void onConnect(SocketIOClient client, SocketUser user) {
+        long startedAt = System.nanoTime();
+        long notifyDuplicateLoginMs = 0;
+        long clientSetUserMs = 0;
+        long rejoinRoomsMs = 0;
+        long connectedUsersSetMs = 0;
+        long joinDefaultRoomsMs = 0;
+        int rejoinRoomCount = 0;
+        String outcome = "exception";
         String userId = user.id();
+        long userContextMs = 0;
         
         try {
             // Redis store 모드에서는 socket 전용 room broadcast로 다른 노드의 기존 연결에도 통보한다.
+            long stepStartedAt = System.nanoTime();
             notifyDuplicateLogin(client, userId);
+            notifyDuplicateLoginMs = elapsedMillis(stepStartedAt);
+
+            stepStartedAt = System.nanoTime();
             client.set("user", user);
+            userContextMs = elapsedMillis(stepStartedAt);
+            clientSetUserMs = userContextMs;
             
-            userRooms.get(userId).forEach(roomId -> {
+            stepStartedAt = System.nanoTime();
+            Set<String> roomsToRejoin = userRooms.get(userId);
+            rejoinRoomCount = roomsToRejoin.size();
+            roomsToRejoin.forEach(roomId -> {
                 // 재접속 시 기존 참여 방 재입장 처리
                 roomJoinHandler.handleJoinRoom(client, roomId);
             });
+            rejoinRoomsMs = elapsedMillis(stepStartedAt);
             
+            stepStartedAt = System.nanoTime();
             connectedUsers.set(userId, user);
+            connectedUsersSetMs = elapsedMillis(stepStartedAt);
 
             log.info("Socket.IO user connected: {} ({}) - Total concurrent users: {}",
                     getUserName(client), userId, connectedUsers.size());
 
+            stepStartedAt = System.nanoTime();
             client.joinRooms(Set.of(USER_ROOM_PREFIX + userId, SOCKET_SESSION_ROOM_PREFIX + client.getSessionId(), ROOM_LIST_ROOM));
+            joinDefaultRoomsMs = elapsedMillis(stepStartedAt);
+            outcome = "success";
             
         } catch (Exception e) {
             log.error("Error handling Socket.IO connection", e);
             client.sendEvent(ERROR, Map.of(
                     "message", "연결 처리 중 오류가 발생했습니다."
             ));
+        } finally {
+            long totalMs = elapsedMillis(startedAt);
+            if (totalMs >= perfSlowThresholdMs) {
+                log.info("[PERF][socketConnect] status={} totalMs={} userContextMs={} duplicateLoginMs={} roomRestoreMs={} restoredRoomCount={} connectedUsersMs={} defaultRoomJoinMs={} userId={} socketId={}",
+                        outcome, totalMs, userContextMs, notifyDuplicateLoginMs, rejoinRoomsMs,
+                        rejoinRoomCount, connectedUsersSetMs, joinDefaultRoomsMs, userId, client.getSessionId());
+            }
         }
     }
     
@@ -166,5 +200,9 @@ public class ConnectionLoginHandler {
                 log.error("Error sending duplicate login session end event", e);
             }
         }, Duration.ofSeconds(10).toSeconds(), TimeUnit.SECONDS);
+    }
+
+    private static long elapsedMillis(long startedAt) {
+        return (System.nanoTime() - startedAt) / 1_000_000;
     }
 }
