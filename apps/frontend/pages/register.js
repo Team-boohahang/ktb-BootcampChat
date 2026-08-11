@@ -54,10 +54,10 @@ const Register = () => {
       
       setSuccess(true);
       setLoading(false);
-      
-      setTimeout(() => {
-        router.push('/login');
-      }, 1000);
+
+      // 지연된 라우팅은 다음 로그인 이동과 겹쳐 기존 navigation을 취소할 수 있다.
+      // 가입 완료 시 로그인 화면으로 즉시 전환해 이동 순서를 결정적으로 유지한다.
+      await router.replace('/');
     } catch (err) {
       setError(err.message || '회원가입 처리 중 오류가 발생했습니다.');
       setLoading(false);
