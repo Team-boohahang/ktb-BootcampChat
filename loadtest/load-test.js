@@ -85,7 +85,10 @@ class LoadTester {
       messagesSent: 0,
       messagesReceived: 0,
       messagesRead: 0,
+      readMessagesRequested: 0,
+      readBatchEmits: 0,
       readAcksReceived: 0,
+      readNotificationsReceived: 0,
       previousMessagesFetched: 0,
       reactionsSent: 0,
       reactionUpdatesReceived: 0,
@@ -105,6 +108,7 @@ class LoadTester {
     };
     this.sockets = [];
     this.pendingMessages = new Map();
+    this.reactionTargetCounts = new Map();
     this.metricsInterval = null;
     this.logBuffer = [];
     this.maxLogLines = 10;  // Keep last 10 log lines
@@ -233,6 +237,7 @@ class LoadTester {
       });
 
       this.sockets.push(socket);
+      const readBatcher = this.createReadBatcher(socket);
 
       return new Promise((resolve) => {
         socket.on('connect', () => {
@@ -252,7 +257,7 @@ class LoadTester {
           socket.emit(CLIENT_EMIT.FETCH_PREVIOUS_MESSAGES, { roomId: roomId, limit: 30 });
 
           // Start sending messages
-          this.sendMessages(socket, userId, roomId, socketPendingMessages);
+          this.sendMessages(socket, userId, roomId, socketPendingMessages, readBatcher);
         });
 
         socket.on(SERVER_EMIT.PREVIOUS_MESSAGES_LOADED, (data) => {
@@ -265,6 +270,7 @@ class LoadTester {
         socket.on(SERVER_EMIT.JOIN_ROOM_ERROR, (error) => {
           this.metrics.errorsConnection++;
           this.log('error', `User ${userId} failed to join room:`, error.message || JSON.stringify(error));
+          readBatcher.dispose();
           socket.close();
           resolve();
         });
@@ -283,10 +289,9 @@ class LoadTester {
 
           if (data._id) {
             if (Math.random() < this.config.readSampleRate) {
-              socket.emit(CLIENT_EMIT.MARK_MESSAGES_AS_READ, {
-                messageIds: [data._id]
-              });
               this.metrics.messagesRead++;
+              this.metrics.readMessagesRequested++;
+              readBatcher.add(data._id);
             }
 
             if (Math.random() < this.config.reactionRate) {
@@ -296,12 +301,17 @@ class LoadTester {
                 type: 'add'
               });
               this.metrics.reactionsSent++;
+              this.reactionTargetCounts.set(
+                data._id,
+                (this.reactionTargetCounts.get(data._id) || 0) + 1
+              );
             }
           }
         });
 
         socket.on(SERVER_EMIT.MESSAGES_READ, (data) => {
           this.metrics.readAcksReceived++;
+          this.metrics.readNotificationsReceived++;
         });
 
         socket.on(SERVER_EMIT.MESSAGE_REACTION_UPDATE, (data) => {
@@ -331,12 +341,14 @@ class LoadTester {
           this.metrics.disconnected++;
           this.metrics.disconnectReasons[reason] = (this.metrics.disconnectReasons[reason] || 0) + 1;
           this.log('warn', `User ${userId} disconnected:`, reason);
+          readBatcher.dispose();
           resolve();
         });
 
         socket.on('connect_error', (error) => {
           this.metrics.errorsConnection++;
           this.log('error', `User ${userId} connection error:`, error.message);
+          readBatcher.dispose();
           socket.close();
           resolve();
         });
@@ -348,7 +360,49 @@ class LoadTester {
     }
   }
 
-  async sendMessages(socket, userId, roomId, socketPendingMessages) {
+  createReadBatcher(socket) {
+    const pendingReadIds = new Set();
+    let timer = null;
+
+    const flush = () => {
+      if (timer) {
+        clearTimeout(timer);
+        timer = null;
+      }
+
+      const messageIds = [...pendingReadIds];
+      pendingReadIds.clear();
+      if (messageIds.length === 0 || !socket.connected) {
+        return;
+      }
+
+      socket.emit(CLIENT_EMIT.MARK_MESSAGES_AS_READ, { messageIds });
+      this.metrics.readBatchEmits++;
+    };
+
+    return {
+      add: (messageId) => {
+        if (!messageId) {
+          return;
+        }
+
+        pendingReadIds.add(messageId);
+        if (!timer) {
+          timer = setTimeout(flush, 500);
+        }
+      },
+      flush,
+      dispose: () => {
+        if (timer) {
+          clearTimeout(timer);
+          timer = null;
+        }
+        pendingReadIds.clear();
+      }
+    };
+  }
+
+  async sendMessages(socket, userId, roomId, socketPendingMessages, readBatcher) {
     const messageCount = this.config.messages;
     const minDelay = 1000; // 1 second
     const maxDelay = 3000; // 3 seconds
@@ -383,6 +437,7 @@ class LoadTester {
 
     // After all messages sent, wait a bit then disconnect
     await this.sleep(5000);
+    readBatcher.flush();
     socket.close();
   }
 
@@ -417,6 +472,14 @@ class LoadTester {
     const disconnectSummary = Object.entries(this.metrics.disconnectReasons)
       .map(([reason, count]) => `${reason}: ${count}`)
       .join(', ') || '-';
+    const reactionTargetCounts = [...this.reactionTargetCounts.values()];
+    const uniqueReactionTargetMessages = reactionTargetCounts.length;
+    const maxReactionsPerMessage = reactionTargetCounts.length > 0
+      ? Math.max(...reactionTargetCounts)
+      : 0;
+    const avgReactionsPerTargetMessage = reactionTargetCounts.length > 0
+      ? (this.metrics.reactionsSent / reactionTargetCounts.length).toFixed(2)
+      : 0;
 
     const table = new Table({
       head: [chalk.cyan('Metric'), chalk.cyan('Value')],
@@ -437,12 +500,18 @@ class LoadTester {
       [chalk.yellow('Pending Message Acks'), this.metrics.pendingMessageAcks],
       [chalk.yellow('Missed Message Acks'), this.metrics.missedMessageAcks],
       [chalk.cyan('Messages Marked Read'), this.metrics.messagesRead],
+      [chalk.cyan('Read Messages Requested'), this.metrics.readMessagesRequested],
+      [chalk.cyan('Read Batch Emits'), this.metrics.readBatchEmits],
       [chalk.cyan('Read Acks Received'), this.metrics.readAcksReceived],
+      [chalk.cyan('Read Notifications Received'), this.metrics.readNotificationsReceived],
       ['Messages/sec', (this.metrics.messagesSent / elapsed).toFixed(2)],
       ['---', '---'],
       [chalk.cyan('Prev Msgs Fetched'), this.metrics.previousMessagesFetched],
       [chalk.cyan('Reactions Sent'), this.metrics.reactionsSent],
       [chalk.cyan('Reaction Updates Received'), this.metrics.reactionUpdatesReceived],
+      [chalk.cyan('Unique Reaction Target Messages'), uniqueReactionTargetMessages],
+      [chalk.cyan('Max Reactions Per Message'), maxReactionsPerMessage],
+      [chalk.cyan('Avg Reactions Per Target'), avgReactionsPerTargetMessage],
       [chalk.cyan('Session Ended Received'), this.metrics.sessionEndedReceived],
       [chalk.cyan('Participants Updates Received'), this.metrics.participantsUpdatesReceived],
       ['---', '---'],

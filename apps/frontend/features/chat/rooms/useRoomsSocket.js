@@ -18,6 +18,7 @@ export const useRoomsSocket = ({
     if (!currentUser?.token) return;
 
     let isSubscribed = true;
+    let subscribedHandlers = null;
 
     const connectSocket = async () => {
       try {
@@ -74,6 +75,7 @@ export const useRoomsSocket = ({
         Object.entries(handlers).forEach(([event, handler]) => {
           socket.on(event, handler);
         });
+        subscribedHandlers = handlers;
       } catch (error) {
         if (!isSubscribed) return;
 
@@ -92,10 +94,17 @@ export const useRoomsSocket = ({
 
     return () => {
       isSubscribed = false;
-      if (socketRef.current) {
-        socketRef.current.disconnect();
-        socketRef.current = null;
+
+      const socket = socketRef.current;
+      if (socket && subscribedHandlers) {
+        Object.entries(subscribedHandlers).forEach(([event, handler]) => {
+          socket.off?.(event, handler);
+        });
       }
+
+      // socketClient는 방 목록과 채팅방이 공유한다. 여기서 연결까지 끊으면
+      // 화면 전환 직후 채팅방 초기화가 같은 소켓을 붙든 채 대기하게 된다.
+      socketRef.current = null;
     };
   }, [currentUser]); // eslint-disable-line react-hooks/exhaustive-deps
 

@@ -13,7 +13,6 @@ import com.ktb.chatapp.model.User;
 import com.ktb.chatapp.repository.MessageRepository;
 import com.ktb.chatapp.repository.RoomRepository;
 import com.ktb.chatapp.repository.UserRepository;
-import com.ktb.chatapp.service.RecentMessageCounter;
 import com.ktb.chatapp.websocket.socketio.SocketUser;
 import com.ktb.chatapp.websocket.socketio.UserRooms;
 import java.time.LocalDateTime;
@@ -46,7 +45,6 @@ class RoomJoinHandlerTest {
     @Mock private MessageLoader messageLoader;
     @Mock private MessageResponseMapper messageResponseMapper;
     @Mock private RoomLeaveHandler roomLeaveHandler;
-    @Mock private RecentMessageCounter recentMessageCounter;
     @Mock private SocketIOClient client;
     @Mock private BroadcastOperations roomOperations;
 
@@ -62,8 +60,7 @@ class RoomJoinHandlerTest {
                 userRooms,
                 messageLoader,
                 messageResponseMapper,
-                roomLeaveHandler,
-                recentMessageCounter);
+                roomLeaveHandler);
     }
 
     @Test
@@ -113,7 +110,6 @@ class RoomJoinHandlerTest {
         verify(roomRepository).addParticipant("room-1", "user-1");
         verify(client).joinRoom("room-1");
         verify(userRooms).add("user-1", "room-1");
-        verify(recentMessageCounter).recordMessage(any(Message.class));
         verify(client).sendEvent(eq(JOIN_ROOM_SUCCESS), any());
         verify(roomOperations).sendEvent(MESSAGE, joinMessageResponse);
         verify(roomOperations).sendEvent(eq(PARTICIPANTS_UPDATE), any());

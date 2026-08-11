@@ -35,12 +35,12 @@ public class MessageReadStatusService {
      * @param roomId 메시지가 속한 채팅방 ID
      * @param messageIds 읽음 상태를 업데이트할 메시지 리스트
      * @param userId 읽은 사용자 ID
-     * @return 모든 배치 갱신이 성공했으면 {@code true}, 하나라도 실패했으면 {@code false}
+     * @return 변경된 메시지 수, 실패 시 -1
      */
-    public boolean updateReadStatus(String roomId, List<String> messageIds, String userId) {
+    public long updateReadStatus(String roomId, List<String> messageIds, String userId) {
         if (!StringUtils.hasText(roomId) || !StringUtils.hasText(userId)
                 || messageIds == null || messageIds.isEmpty()) {
-            return true;
+            return 0;
         }
 
         List<String> uniqueMessageIds = new ArrayList<>(new LinkedHashSet<>(
@@ -48,7 +48,7 @@ public class MessageReadStatusService {
                         .filter(StringUtils::hasText)
                         .toList()));
         if (uniqueMessageIds.isEmpty()) {
-            return true;
+            return 0;
         }
 
         var readerInfo = Message.MessageReader.builder()
@@ -65,10 +65,10 @@ public class MessageReadStatusService {
             }
             log.debug("Read status updated for {} of {} messages by user {} in room {}",
                     modifiedCount, uniqueMessageIds.size(), userId, roomId);
-            return true;
+            return modifiedCount;
         } catch (Exception e) {
             log.error("Read status update error for user {} in room {}", userId, roomId, e);
-            return false;
+            return -1;
         }
     }
 

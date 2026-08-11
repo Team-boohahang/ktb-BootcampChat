@@ -13,7 +13,11 @@ import com.ktb.chatapp.repository.RoomRepository;
 import com.ktb.chatapp.repository.UserRepository;
 import com.ktb.chatapp.service.MessageReadStatusService;
 import com.ktb.chatapp.websocket.socketio.SocketUser;
+import java.util.ArrayList;
+import java.util.LinkedHashMap;
+import java.util.List;
 import java.util.Map;
+import java.util.stream.Collectors;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
@@ -30,6 +34,7 @@ import static com.ktb.chatapp.websocket.socketio.SocketIOEvents.*;
 @ConditionalOnProperty(name = "socketio.enabled", havingValue = "true", matchIfMissing = true)
 @RequiredArgsConstructor
 public class MessageReadHandler {
+    private static final String USER_ROOM_PREFIX = "user:";
     
     private final SocketIOServer socketIOServer;
     private final MessageReadStatusService messageReadStatusService;
@@ -70,20 +75,24 @@ public class MessageReadHandler {
                 return;
             }
             
-            boolean updated = messageReadStatusService
+            long modifiedCount = messageReadStatusService
                     .updateReadStatus(roomId, data.getMessageIds(), userId);
-            if (!updated) {
+            if (modifiedCount < 0) {
                 client.sendEvent(ERROR, Map.of(
                         "message", "읽음 상태 업데이트 중 오류가 발생했습니다."
                 ));
                 return;
             }
+            if (modifiedCount == 0) {
+                return;
+            }
 
-            MessagesReadResponse response = new MessagesReadResponse(userId, data.getMessageIds());
-
-            // Broadcast to room
-            socketIOServer.getRoomOperations(roomId)
-                    .sendEvent(MESSAGES_READ, response);
+            Map<String, List<String>> senderToMessageIds = groupMessageIdsBySender(data.getMessageIds(), userId);
+            senderToMessageIds.forEach((senderId, messageIds) -> {
+                MessagesReadResponse response = new MessagesReadResponse(userId, messageIds);
+                socketIOServer.getRoomOperations(USER_ROOM_PREFIX + senderId)
+                        .sendEvent(MESSAGES_READ, response);
+            });
 
         } catch (Exception e) {
             log.error("Error handling markMessagesAsRead", e);
@@ -96,5 +105,25 @@ public class MessageReadHandler {
     private String getUserId(SocketIOClient client) {
         var user = (SocketUser) client.get("user");
         return user != null ? user.id() : null;
+    }
+
+    private Map<String, List<String>> groupMessageIdsBySender(List<String> requestedMessageIds, String readerUserId) {
+        Map<String, Message> messageById = new LinkedHashMap<>();
+        messageRepository.findAllById(requestedMessageIds).forEach(message -> {
+            if (message.getId() != null) {
+                messageById.put(message.getId(), message);
+            }
+        });
+
+        return requestedMessageIds.stream()
+                .distinct()
+                .map(messageById::get)
+                .filter(message -> message != null
+                        && message.getSenderId() != null
+                        && !message.getSenderId().equals(readerUserId))
+                .collect(Collectors.groupingBy(
+                        Message::getSenderId,
+                        LinkedHashMap::new,
+                        Collectors.mapping(Message::getId, Collectors.toCollection(ArrayList::new))));
     }
 }

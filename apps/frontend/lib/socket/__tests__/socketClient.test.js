@@ -108,6 +108,7 @@ describe('socketClient', () => {
     client.joinRoom('room-1');
     client.leaveRoom('room-1');
     client.markMessagesAsRead(['message-1']);
+    client.flushPendingReads();
 
     expect(service.send).toHaveBeenCalledWith('chatMessage', {
       room: 'room-1',
@@ -148,11 +149,49 @@ describe('socketClient', () => {
     const client = createSocketClient(service);
 
     client.markMessagesAsRead(['message-1'], socket);
+    client.flushPendingReads(socket);
 
     expect(service.sendOn).toHaveBeenCalledWith(socket, 'markMessagesAsRead', {
       messageIds: ['message-1'],
     });
     expect(service.send).not.toHaveBeenCalled();
+  });
+
+  it('batches read markers for 500ms and removes duplicate message ids', async () => {
+    vi.useFakeTimers();
+    const service = {
+      send: vi.fn(),
+    };
+    const client = createSocketClient(service);
+
+    client.markMessagesAsRead(['message-1']);
+    client.markMessagesAsRead(['message-2', 'message-1']);
+
+    expect(service.send).not.toHaveBeenCalled();
+
+    await vi.advanceTimersByTimeAsync(500);
+
+    expect(service.send).toHaveBeenCalledTimes(1);
+    expect(service.send).toHaveBeenCalledWith('markMessagesAsRead', {
+      messageIds: ['message-1', 'message-2'],
+    });
+    vi.useRealTimers();
+  });
+
+  it('flushes pending read markers before disconnecting', () => {
+    const service = {
+      send: vi.fn(),
+      disconnect: vi.fn(),
+    };
+    const client = createSocketClient(service);
+
+    client.markMessagesAsRead(['message-1']);
+    client.disconnect();
+
+    expect(service.send).toHaveBeenCalledWith('markMessagesAsRead', {
+      messageIds: ['message-1'],
+    });
+    expect(service.disconnect).toHaveBeenCalledTimes(1);
   });
 
   it('tries to leave a room through a target socket without throwing', () => {

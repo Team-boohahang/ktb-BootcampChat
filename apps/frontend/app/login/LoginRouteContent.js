@@ -21,6 +21,7 @@ const LoginRouteContent = () => {
     <LoginPage
       router={router}
       redirectUrl={getSafeRedirectPath(searchParams.get('redirect'))}
+      useDocumentNavigation
     />
   );
 };
