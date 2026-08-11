@@ -1,10 +1,10 @@
 'use client';
 
-import { useEffect } from 'react';
+import { Suspense, useEffect } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
 import LoginPage from '@/components/LoginPage';
 
-const LoginRoutePage = () => {
+const LoginRouteContent = () => {
   const router = useRouter();
   const searchParams = useSearchParams();
   const queryString = searchParams.toString();
@@ -23,5 +23,11 @@ const LoginRoutePage = () => {
     />
   );
 };
+
+const LoginRoutePage = () => (
+  <Suspense fallback={null}>
+    <LoginRouteContent />
+  </Suspense>
+);
 
 export default LoginRoutePage;
