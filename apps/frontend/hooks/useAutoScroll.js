@@ -67,10 +67,10 @@ export const useAutoScroll = (
     // 스크롤 완료 후 플래그 리셋
     autoScrollResetTimeoutRef.current = setTimeout(() => {
       isAutoScrollingRef.current = false;
-      isNearBottomRef.current = true;
+      isNearBottomRef.current = checkIsNearBottom();
       autoScrollResetTimeoutRef.current = null;
     }, 300);
-  }, []);
+  }, [checkIsNearBottom]);
 
   useEffect(() => () => {
     if (autoScrollResetTimeoutRef.current) {
