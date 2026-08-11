@@ -126,7 +126,13 @@ export const AuthProviderWithRouter = ({ children, router }) => {
     socketService.disconnect();
     saveUser(null);
 
-    await router.push('/');
+    try {
+      await router.push('/');
+    } catch (error) {
+      // 로컬 세션은 이미 정리됐으므로 라우팅 실패가 로그아웃이나
+      // 세션 만료 오류를 덮어쓰지 않게 한다.
+      console.error('Logout navigation error:', error);
+    }
   }, [user, saveUser, router]);
 
   // 회원가입
