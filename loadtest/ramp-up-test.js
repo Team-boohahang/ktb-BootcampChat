@@ -467,6 +467,7 @@ class RampUpLoadTester {
 
         // Send file message to chat room via socket
         socket.emit(CLIENT_EMIT.CHAT_MESSAGE, {
+          clientMessageId: uuidv4(),
           room: roomId,
           type: 'file',
           content: '',
@@ -798,6 +799,7 @@ class RampUpLoadTester {
         // (기존 emit 직후 시간차 측정은 로컬 큐잉 시간이라 폐기 — spec §1.1/§3.3)
         const ts = Date.now();
         socket.emit(CLIENT_EMIT.CHAT_MESSAGE, {
+          clientMessageId: uuidv4(),
           room: roomId,
           type: 'text',
           content: `__ts${ts}__ Ramp-up test message from user ${userId}`

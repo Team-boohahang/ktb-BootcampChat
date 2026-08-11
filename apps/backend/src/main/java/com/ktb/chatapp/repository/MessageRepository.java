@@ -12,6 +12,9 @@ import org.springframework.stereotype.Repository;
 @Repository
 public interface MessageRepository extends MongoRepository<Message, String> {
     Page<Message> findByRoomIdAndTimestampBefore(String roomId, LocalDateTime timestamp, Pageable pageable);
+    Optional<Message> findBySenderIdAndClientMessageId(String senderId, String clientMessageId);
+    long countBySenderIdAndClientMessageId(String senderId, String clientMessageId);
+
     /**
      * 특정 시간 이후의 메시지 수 카운트
      * 최근 N분간 메시지 수를 조회할 때 사용

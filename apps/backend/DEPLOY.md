@@ -127,6 +127,7 @@ tail -f logs/app.log
    # 멀티 인스턴스: redis
    SOCKETIO_STORE_TYPE=memory
    SOCKETIO_REDIS_STATE_TTL_HOURS=168
+   ROOM_ACTIVITY_DEBOUNCE_MS=1000
 
    # OpenAI API
    OPENAI_API_KEY=sk-...

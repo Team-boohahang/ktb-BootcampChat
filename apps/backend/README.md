@@ -96,6 +96,7 @@ make verify-java
 | `WS_PORT` | ❌ | `5002` | Socket.IO 서버 포트             |
 | `SOCKETIO_STORE_TYPE` | ❌ | `memory` | Socket.IO store 방식. 단일 인스턴스는 `memory`, 멀티 인스턴스는 `redis` |
 | `SOCKETIO_REDIS_STATE_TTL_HOURS` | ❌ | `168` | Redis store 사용 시 connected user/user room 상태 TTL. `0` 이하이면 TTL 없이 저장 |
+| `ROOM_ACTIVITY_DEBOUNCE_MS` | ❌ | `1000` | 메시지 저장 후 방 목록 활성도 이벤트를 같은 방 기준으로 묶는 시간 |
 | `CORS_ALLOWED_ORIGINS` | ❌ | `*` | REST API CORS 허용 Origin 목록. 쉼표로 구분 |
 | `SOCKETIO_SERVER_ORIGIN` | ❌ | `*` | Socket.IO 허용 Origin. Netty Socket.IO 설정은 단일 Origin 값을 사용 |
 | `MANAGEMENT_HEALTH_SHOW_DETAILS` | ❌ | `when_authorized` | Actuator health 상세 노출 수준 |
