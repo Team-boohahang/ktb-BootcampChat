@@ -107,21 +107,16 @@ export const AuthProviderWithRouter = ({ children, router }) => {
 
   // 로그아웃 (API 호출 + 상태 정리)
   const logout = useCallback(async () => {
-    try {
-      // authService를 통해 로그아웃 API 호출
-      await authService.logout(user?.token, user?.sessionId);
-    } catch (error) {
-      console.error('Logout error:', error);
-    } finally {
-      // 소켓 연결 해제
-      socketService.disconnect();
+    // 서버 응답이 느려도 로컬 로그아웃과 화면 이동을 지연시키지 않는다.
+    const serverLogout = authService.logout(user?.token, user?.sessionId);
 
-      // 로컬 상태 정리
-      saveUser(null);
+    socketService.disconnect();
+    saveUser(null);
 
-      // 로그인 페이지로 이동
-      router.push('/');
-    }
+    await Promise.all([
+      serverLogout,
+      router.push('/'),
+    ]);
   }, [user, saveUser, router]);
 
   // 회원가입

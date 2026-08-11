@@ -9,7 +9,7 @@ export default defineConfig({
       name: 'load-js-files-as-jsx',
       enforce: 'pre',
       async transform(code, id) {
-        if (!id.match(/\/(components|features|hooks|lib|pages)\/.*\.js$/)) {
+        if (!id.match(/\/(components|contexts|features|hooks|lib|pages)\/.*\.js$/)) {
           return null;
         }
 
