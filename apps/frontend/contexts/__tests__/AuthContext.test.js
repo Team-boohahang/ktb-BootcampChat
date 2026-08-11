@@ -74,9 +74,12 @@ describe('AuthContext logout', () => {
     });
 
     expect(authService.logout).toHaveBeenCalledWith('token', 'session');
-    expect(socketService.disconnect).toHaveBeenCalledOnce();
     expect(clearStoredUser).toHaveBeenCalledOnce();
     expect(router.push).toHaveBeenCalledWith('/');
+
+    await waitFor(() => {
+      expect(socketService.disconnect).toHaveBeenCalledOnce();
+    });
 
     resolveServerLogout();
     await act(async () => {

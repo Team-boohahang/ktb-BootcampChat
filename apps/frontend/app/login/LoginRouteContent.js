@@ -1,14 +1,11 @@
 'use client';
 
 import { useEffect } from 'react';
-import { useRouter, useSearchParams } from 'next/navigation';
+import { useRouter } from 'next/navigation';
 import LoginPage from '@/components/LoginPage';
-import { getSafeRedirectPath } from '@/lib/auth/safeRedirect';
 
-const LoginRouteContent = () => {
+const LoginRouteContent = ({ queryString = '', redirectUrl = '/chat' }) => {
   const router = useRouter();
-  const searchParams = useSearchParams();
-  const queryString = searchParams.toString();
 
   useEffect(() => {
     // 네트워크 내비게이션 없이 주소만 정규화한다. `/login` 문서의 로드를
@@ -20,7 +17,7 @@ const LoginRouteContent = () => {
   return (
     <LoginPage
       router={router}
-      redirectUrl={getSafeRedirectPath(searchParams.get('redirect'))}
+      redirectUrl={redirectUrl}
       useDocumentNavigation
     />
   );
