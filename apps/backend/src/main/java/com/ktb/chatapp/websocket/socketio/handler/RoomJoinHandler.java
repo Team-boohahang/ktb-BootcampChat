@@ -13,7 +13,6 @@ import com.ktb.chatapp.model.Room;
 import com.ktb.chatapp.repository.MessageRepository;
 import com.ktb.chatapp.repository.RoomRepository;
 import com.ktb.chatapp.repository.UserRepository;
-import com.ktb.chatapp.service.RecentMessageCounter;
 import com.ktb.chatapp.websocket.socketio.SocketUser;
 import com.ktb.chatapp.websocket.socketio.UserRooms;
 import java.time.LocalDateTime;
@@ -43,7 +42,6 @@ public class RoomJoinHandler {
     private final MessageLoader messageLoader;
     private final MessageResponseMapper messageResponseMapper;
     private final RoomLeaveHandler roomLeaveHandler;
-    private final RecentMessageCounter recentMessageCounter;
     
     @OnEvent(JOIN_ROOM)
     public void handleJoinRoom(SocketIOClient client, String roomId) {
@@ -92,7 +90,6 @@ public class RoomJoinHandler {
                 .build();
 
             joinMessage = messageRepository.save(joinMessage);
-            trackRecentMessage(joinMessage);
 
             // 초기 메시지 로드
             FetchMessagesRequest req = new FetchMessagesRequest(roomId, 30, null);
@@ -140,14 +137,6 @@ public class RoomJoinHandler {
             client.sendEvent(JOIN_ROOM_ERROR, Map.of(
                 "message", e.getMessage() != null ? e.getMessage() : "채팅방 입장에 실패했습니다."
             ));
-        }
-    }
-
-    private void trackRecentMessage(Message message) {
-        try {
-            recentMessageCounter.recordMessage(message);
-        } catch (RuntimeException e) {
-            log.warn("Recent message count update failed: roomId={}", message.getRoomId(), e);
         }
     }
     

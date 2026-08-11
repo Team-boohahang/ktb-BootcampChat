@@ -12,7 +12,11 @@ import org.springframework.stereotype.Repository;
 @Repository
 public interface MessageRepository extends MongoRepository<Message, String> {
     Page<Message> findByRoomIdAndTimestampBefore(String roomId, LocalDateTime timestamp, Pageable pageable);
+
+    @Query("{ 'sender': ?0, 'clientMessageId': { '$eq': ?1, '$type': 'string' } }")
     Optional<Message> findBySenderIdAndClientMessageId(String senderId, String clientMessageId);
+
+    @Query(value = "{ 'sender': ?0, 'clientMessageId': { '$eq': ?1, '$type': 'string' } }", count = true)
     long countBySenderIdAndClientMessageId(String senderId, String clientMessageId);
 
     /**
