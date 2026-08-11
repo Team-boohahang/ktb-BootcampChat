@@ -109,7 +109,7 @@ const ChatMessages = ({
   return (
     <VStack
       ref={containerRef}
-      className="h-full overflow-y-auto overflow-x-hidden scroll-smooth [overflow-scrolling:touch]"
+      className="h-full overflow-y-auto overflow-x-hidden [overflow-scrolling:touch]"
       $css={{
         gap: '$200',
         padding: '$300',

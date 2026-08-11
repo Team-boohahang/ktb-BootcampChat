@@ -24,6 +24,7 @@ export const useAutoScroll = (
   const isNearBottomRef = useRef(true);
   const previousMessagesLengthRef = useRef(0);
   const isAutoScrollingRef = useRef(false);
+  const autoScrollResetTimeoutRef = useRef(null);
   
   // 스크롤 복원을 위한 ref
   const previousScrollHeightRef = useRef(0);
@@ -50,18 +51,31 @@ export const useAutoScroll = (
     const container = containerRef.current;
     if (!container) return;
 
+    const isSmoothScrollInProgress = behavior === 'smooth' && isAutoScrollingRef.current;
     isAutoScrollingRef.current = true;
 
     container.scrollTo({
       top: container.scrollHeight,
-      behavior
+      // 연속 메시지는 진행 중인 애니메이션을 다시 시작하지 않고 즉시 최하단에 맞춘다.
+      behavior: isSmoothScrollInProgress ? 'auto' : behavior
     });
 
+    if (autoScrollResetTimeoutRef.current) {
+      clearTimeout(autoScrollResetTimeoutRef.current);
+    }
+
     // 스크롤 완료 후 플래그 리셋
-    setTimeout(() => {
+    autoScrollResetTimeoutRef.current = setTimeout(() => {
       isAutoScrollingRef.current = false;
       isNearBottomRef.current = true;
+      autoScrollResetTimeoutRef.current = null;
     }, 300);
+  }, []);
+
+  useEffect(() => () => {
+    if (autoScrollResetTimeoutRef.current) {
+      clearTimeout(autoScrollResetTimeoutRef.current);
+    }
   }, []);
 
   /**
