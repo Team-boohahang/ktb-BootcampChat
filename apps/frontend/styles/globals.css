@@ -72,27 +72,6 @@ body {
   overflow: hidden;
 }
 
-/* Chat Room Layout */
-.chat-container {
-  height: 100vh;
-  width: 100vw;
-  display: flex;
-  justify-content: center;
-  padding: var(--vapor-space-300);
-}
-
-.chat-room-card {
-  width: 100%;
-  max-width: 1200px;
-  height: 85vh;
-  margin: 0 auto;
-  display: flex;
-  flex-direction: column;
-  border-radius: var(--vapor-radius-lg);
-  background-color: var(--vapor-color-normal);
-  border: 1px solid var(--vapor-color-border);
-}
-
 /* Webkit Scrollbar Styling */
 ::-webkit-scrollbar {
   width: 6px;

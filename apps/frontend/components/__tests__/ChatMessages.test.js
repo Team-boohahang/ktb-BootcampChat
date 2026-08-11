@@ -58,7 +58,7 @@ describe('ChatMessages', () => {
     ]);
   });
 
-  it('keeps optimized message wrappers discoverable in the rendered DOM', () => {
+  it('renders message wrappers without an inaccurate intrinsic height', () => {
     render(
       React.createElement(ChatMessages, {
         messages: [
@@ -76,13 +76,12 @@ describe('ChatMessages', () => {
     );
 
     const message = screen.getByText('discoverable message');
-    const optimizedWrapper = message.closest('[style]');
+    const messageWrapper = message.closest('[data-testid="chat-message-item"]');
 
     expect(message).toBeInTheDocument();
-    expect(optimizedWrapper).toHaveStyle({
-      contentVisibility: 'auto',
-      containIntrinsicSize: '1px 96px',
-    });
+    expect(messageWrapper).toHaveAttribute('data-message-id', 'message-1');
+    expect(messageWrapper.style.contentVisibility).toBe('');
+    expect(messageWrapper.style.containIntrinsicSize).toBe('');
     expect(screen.getByText('이전 메시지를 불러오는 중...')).toBeInTheDocument();
   });
 });
