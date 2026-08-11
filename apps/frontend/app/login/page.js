@@ -1,17 +1,27 @@
 'use client';
 
 import { useEffect } from 'react';
-import { useRouter } from 'next/navigation';
+import { useRouter, useSearchParams } from 'next/navigation';
+import LoginPage from '@/components/LoginPage';
 
-const LoginRedirectPage = () => {
+const LoginRoutePage = () => {
   const router = useRouter();
+  const searchParams = useSearchParams();
+  const queryString = searchParams.toString();
 
   useEffect(() => {
-    const queryString = window.location.search;
-    router.replace(queryString ? `/${queryString}` : '/');
-  }, [router]);
+    // 네트워크 내비게이션 없이 주소만 정규화한다. `/login` 문서의 로드를
+    // 중단하지 않으므로 Playwright page.goto와 리다이렉트가 경합하지 않는다.
+    const canonicalUrl = queryString ? `/?${queryString}` : '/';
+    window.history.replaceState(window.history.state, '', canonicalUrl);
+  }, [queryString]);
 
-  return null;
+  return (
+    <LoginPage
+      router={router}
+      redirectUrl={searchParams.get('redirect') || '/chat'}
+    />
+  );
 };
 
-export default LoginRedirectPage;
+export default LoginRoutePage;
