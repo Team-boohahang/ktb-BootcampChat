@@ -21,8 +21,10 @@ import java.nio.charset.StandardCharsets;
 import java.security.Principal;
 import java.util.HashMap;
 import java.util.Map;
+import java.util.concurrent.TimeUnit;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.http.CacheControl;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.MediaType;
@@ -228,10 +230,13 @@ public class FileController {
                 encodeFilename(stream.originalname())
         );
 
+        // 파일명이 업로드마다 새로 생성되어 같은 URL은 항상 같은 내용을 가리킴 -> 재검증 없이 캐싱 가능
+        // 인가가 필요한 리소스이므로 공유 캐시에는 태우지 않고 브라우저 캐시에만 허용
         return ResponseEntity.ok()
                 .contentType(MediaType.parseMediaType(stream.contentType()))
                 .contentLength(stream.size())
                 .header(HttpHeaders.CONTENT_DISPOSITION, contentDisposition)
+                .cacheControl(CacheControl.maxAge(365, TimeUnit.DAYS).cachePrivate().immutable())
                 .body(stream.resource());
     }
 
