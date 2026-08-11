@@ -173,7 +173,7 @@ public class ChatMessageHandler {
                     .sendEvent(MESSAGE, messageResponse);
             client.sendEvent(MESSAGE, messageResponse);
 
-            roomActivityNotifier.notifyMessageStored(roomId);
+            roomActivityNotifier.notifyMessageStored(savedMessage);
 
             // AI 멘션 처리
             aiService.handleAIMentions(roomId, socketUser.id(), messageContent);

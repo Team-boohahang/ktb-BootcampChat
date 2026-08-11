@@ -8,6 +8,7 @@ import com.ktb.chatapp.model.AiType;
 import com.ktb.chatapp.model.Message;
 import com.ktb.chatapp.model.MessageType;
 import com.ktb.chatapp.repository.MessageRepository;
+import com.ktb.chatapp.service.RecentMessageCounter;
 import com.ktb.chatapp.websocket.socketio.handler.StreamingSession;
 import java.util.Map;
 import java.util.concurrent.atomic.AtomicBoolean;
@@ -31,14 +32,17 @@ public class AiService {
     private final ChatClient chatClient;
     private final ApplicationEventPublisher eventPublisher;
     private final MessageRepository messageRepository;
+    private final RecentMessageCounter recentMessageCounter;
 
     public AiService(
             ChatClient.Builder chatClientBuilder,
             ApplicationEventPublisher eventPublisher,
-            MessageRepository messageRepository) {
+            MessageRepository messageRepository,
+            RecentMessageCounter recentMessageCounter) {
         this.chatClient = chatClientBuilder.build();
         this.eventPublisher = eventPublisher;
         this.messageRepository = messageRepository;
+        this.recentMessageCounter = recentMessageCounter;
     }
 
     public void handleAIMentions(String roomId, String userId, MessageContent messageContent) {
@@ -108,6 +112,11 @@ public class AiService {
         try {
             // 메시지 저장
             Message savedMessage = messageRepository.save(getMessage(event));
+            try {
+                recentMessageCounter.recordMessage(savedMessage);
+            } catch (RuntimeException e) {
+                log.warn("Recent message count update failed: roomId={}", savedMessage.getRoomId(), e);
+            }
             log.info("AI message saved - messageId: {}, savedId: {}, roomId: {}",
                 event.getMessageId(), savedMessage.getId(), event.getRoomId());
 

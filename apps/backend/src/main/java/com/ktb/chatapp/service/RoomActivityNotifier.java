@@ -1,6 +1,7 @@
 package com.ktb.chatapp.service;
 
 import com.ktb.chatapp.event.RoomActivityEvent;
+import com.ktb.chatapp.model.Message;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.context.ApplicationEventPublisher;
@@ -17,16 +18,17 @@ public class RoomActivityNotifier {
     private final RecentMessageCounter recentMessageCounter;
     private final ApplicationEventPublisher eventPublisher;
 
-    public void notifyMessageStored(String roomId) {
-        if (roomId == null) {
+    public void notifyMessageStored(Message savedMessage) {
+        if (savedMessage == null || savedMessage.getRoomId() == null) {
             return;
         }
 
         try {
-            int recentMessageCount = recentMessageCounter.countRecentMessages(roomId);
-            eventPublisher.publishEvent(new RoomActivityEvent(this, roomId, recentMessageCount));
+            int recentMessageCount = recentMessageCounter.recordMessage(savedMessage);
+            eventPublisher.publishEvent(new RoomActivityEvent(
+                    this, savedMessage.getRoomId(), recentMessageCount));
         } catch (Exception e) {
-            log.error("roomActivity 이벤트 발행 실패: roomId={}", roomId, e);
+            log.error("roomActivity 이벤트 발행 실패: roomId={}", savedMessage.getRoomId(), e);
         }
     }
 }

@@ -1,6 +1,7 @@
 package com.ktb.chatapp.websocket.socketio.ai;
 
 import com.ktb.chatapp.repository.MessageRepository;
+import com.ktb.chatapp.service.RecentMessageCounter;
 import com.ktb.chatapp.websocket.socketio.handler.StreamingSession;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -19,11 +20,13 @@ class AiServiceUnitTest {
     @Mock private ChatClient chatClient;
     @Mock private ApplicationEventPublisher eventPublisher;
     @Mock private MessageRepository messageRepository;
+    @Mock private RecentMessageCounter recentMessageCounter;
 
     @Test
     void streamResponse_rejectsUnknownPersonaBeforeCallingOpenAi() {
         when(chatClientBuilder.build()).thenReturn(chatClient);
-        AiService aiService = new AiService(chatClientBuilder, eventPublisher, messageRepository);
+        AiService aiService = new AiService(
+                chatClientBuilder, eventPublisher, messageRepository, recentMessageCounter);
         StreamingSession session = StreamingSession.builder()
                 .messageId("ai-message-1")
                 .roomId("room-1")

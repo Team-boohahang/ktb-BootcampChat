@@ -12,6 +12,7 @@ import com.ktb.chatapp.model.User;
 import com.ktb.chatapp.repository.MessageRepository;
 import com.ktb.chatapp.repository.RoomRepository;
 import com.ktb.chatapp.repository.UserRepository;
+import com.ktb.chatapp.service.RecentMessageCounter;
 import com.ktb.chatapp.websocket.socketio.SocketUser;
 import com.ktb.chatapp.websocket.socketio.UserRooms;
 import java.time.LocalDateTime;
@@ -42,6 +43,7 @@ public class RoomLeaveHandler {
     private final UserRepository userRepository;
     private final UserRooms userRooms;
     private final MessageResponseMapper messageResponseMapper;
+    private final RecentMessageCounter recentMessageCounter;
     
     @OnEvent(LEAVE_ROOM)
     public void handleLeaveRoom(SocketIOClient client, String roomId) {
@@ -98,6 +100,7 @@ public class RoomLeaveHandler {
             systemMessage.setMetadata(new HashMap<>());
 
             Message savedMessage = messageRepository.save(systemMessage);
+            trackRecentMessage(savedMessage);
             MessageResponse response = messageResponseMapper.mapToMessageResponse(savedMessage, null);
 
             socketIOServer.getRoomOperations(roomId)
@@ -105,6 +108,14 @@ public class RoomLeaveHandler {
 
         } catch (Exception e) {
             log.error("Error sending system message", e);
+        }
+    }
+
+    private void trackRecentMessage(Message message) {
+        try {
+            recentMessageCounter.recordMessage(message);
+        } catch (RuntimeException e) {
+            log.warn("Recent message count update failed: roomId={}", message.getRoomId(), e);
         }
     }
     

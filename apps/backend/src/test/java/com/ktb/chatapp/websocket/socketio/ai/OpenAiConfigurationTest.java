@@ -1,6 +1,7 @@
 package com.ktb.chatapp.websocket.socketio.ai;
 
 import com.ktb.chatapp.repository.MessageRepository;
+import com.ktb.chatapp.service.RecentMessageCounter;
 import org.junit.jupiter.api.Test;
 import org.springframework.ai.chat.client.ChatClient;
 import org.springframework.boot.test.context.runner.ApplicationContextRunner;
@@ -19,6 +20,7 @@ class OpenAiConfigurationTest {
                 return builder;
             })
             .withBean(MessageRepository.class, () -> mock(MessageRepository.class))
+            .withBean(RecentMessageCounter.class, () -> mock(RecentMessageCounter.class))
             .withUserConfiguration(AiService.class);
 
     @Test

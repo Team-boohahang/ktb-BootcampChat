@@ -1,6 +1,8 @@
 package com.ktb.chatapp.service;
 
 import com.ktb.chatapp.event.RoomActivityEvent;
+import com.ktb.chatapp.model.Message;
+import java.time.LocalDateTime;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.ArgumentCaptor;
@@ -28,9 +30,10 @@ class RoomActivityNotifierTest {
 
     @Test
     void notifyMessageStored_firstMessageOfRoom_publishesRecentMessageCount() {
-        when(recentMessageCounter.countRecentMessages("room-1")).thenReturn(7);
+        Message message = savedMessage();
+        when(recentMessageCounter.recordMessage(message)).thenReturn(7);
 
-        notifier().notifyMessageStored("room-1");
+        notifier().notifyMessageStored(message);
 
         ArgumentCaptor<RoomActivityEvent> eventCaptor =
                 ArgumentCaptor.forClass(RoomActivityEvent.class);
@@ -41,15 +44,16 @@ class RoomActivityNotifierTest {
 
     @Test
     void notifyMessageStored_everyMessage_publishes() {
-        when(recentMessageCounter.countRecentMessages("room-1")).thenReturn(1);
+        Message message = savedMessage();
+        when(recentMessageCounter.recordMessage(message)).thenReturn(1);
         RoomActivityNotifier notifier = notifier();
 
-        notifier.notifyMessageStored("room-1");
-        notifier.notifyMessageStored("room-1");
-        notifier.notifyMessageStored("room-1");
+        notifier.notifyMessageStored(message);
+        notifier.notifyMessageStored(message);
+        notifier.notifyMessageStored(message);
 
         verify(eventPublisher, times(3)).publishEvent(any(RoomActivityEvent.class));
-        verify(recentMessageCounter, times(3)).countRecentMessages("room-1");
+        verify(recentMessageCounter, times(3)).recordMessage(message);
     }
 
     @Test
@@ -62,11 +66,20 @@ class RoomActivityNotifierTest {
 
     @Test
     void notifyMessageStored_counterFails_swallowsException() {
-        when(recentMessageCounter.countRecentMessages("room-1"))
+        Message message = savedMessage();
+        when(recentMessageCounter.recordMessage(message))
                 .thenThrow(new RuntimeException("mongo down"));
 
-        notifier().notifyMessageStored("room-1");
+        notifier().notifyMessageStored(message);
 
         verify(eventPublisher, never()).publishEvent(any(RoomActivityEvent.class));
+    }
+
+    private Message savedMessage() {
+        return Message.builder()
+                .id("message-1")
+                .roomId("room-1")
+                .timestamp(LocalDateTime.now())
+                .build();
     }
 }

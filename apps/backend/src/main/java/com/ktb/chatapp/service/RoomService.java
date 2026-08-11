@@ -35,8 +35,12 @@ public class RoomService {
 
         try {
             // 전체 방을 조회해 최신순으로 정렬한다
-            List<RoomResponse> roomResponses = roomRepository.findAll().stream()
-                .map(room -> mapToRoomResponse(room, name))
+            List<Room> rooms = roomRepository.findAll();
+            Map<String, Integer> recentMessageCounts = recentMessageCounter.countRecentMessages(
+                    rooms.stream().map(Room::getId).toList());
+            List<RoomResponse> roomResponses = rooms.stream()
+                .map(room -> mapToRoomResponse(
+                        room, name, recentMessageCounts.getOrDefault(room.getId(), 0)))
                 .sorted(Comparator.comparing(
                     RoomResponse::getCreatedAtDateTime,
                     Comparator.nullsLast(Comparator.reverseOrder())))
@@ -179,6 +183,11 @@ public class RoomService {
     }
 
     private RoomResponse mapToRoomResponse(Room room, String name) {
+        return mapToRoomResponse(
+                room, name, recentMessageCounter.countRecentMessages(room != null ? room.getId() : null));
+    }
+
+    private RoomResponse mapToRoomResponse(Room room, String name, int recentMessageCount) {
         if (room == null) return null;
 
         User creator = null;
@@ -191,8 +200,6 @@ public class RoomService {
             .filter(Optional::isPresent)
             .map(Optional::get)
             .toList();
-
-        int recentMessageCount = recentMessageCounter.countRecentMessages(room.getId());
 
         return RoomResponse.builder()
             .id(room.getId())
