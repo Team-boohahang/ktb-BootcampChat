@@ -1,4 +1,8 @@
-import { deriveUniqueSortedMessages } from '../messages/useMessageList';
+import {
+  deriveUniqueSortedMessages,
+  mergeIncomingMessages,
+  mergeSortedMessages,
+} from '../messages/useMessageList';
 
 export const processLoadedRoomMessages = ({
   loadedMessages,
@@ -13,18 +17,20 @@ export const processLoadedRoomMessages = ({
     throw new Error('Invalid messages format');
   }
 
-  const processedSnapshot = new Set(processedMessageIds.current);
-  processedMessageIds.current = deriveUniqueSortedMessages(
+  const result = deriveUniqueSortedMessages(
     [],
     loadedMessages,
-    processedSnapshot
-  ).processedMessageIds;
+    processedMessageIds.current
+  );
+  processedMessageIds.current = result.processedMessageIds;
 
   let nextMessages;
-  setMessages(prev => {
-    nextMessages = deriveUniqueSortedMessages(prev, loadedMessages, processedSnapshot).messages;
-    return nextMessages;
-  });
+  if (result.messages.length > 0) {
+    setMessages(prev => {
+      nextMessages = mergeSortedMessages(prev, result.messages);
+      return nextMessages;
+    });
+  }
   setHasMoreMessages(hasMore);
 
   if (isInitialLoad) {
@@ -34,9 +40,11 @@ export const processLoadedRoomMessages = ({
   return nextMessages;
 };
 
-export const applyReadReceipts = (messages, { userId, messageIds, timestamp }) =>
-  messages.map(msg => {
-    if (!messageIds.includes(msg._id)) {
+export const applyReadReceipts = (messages, { userId, messageIds, timestamp }) => {
+  const messageIdSet = new Set(messageIds);
+  let hasChanges = false;
+  const nextMessages = messages.map(msg => {
+    if (!messageIdSet.has(msg._id)) {
       return msg;
     }
 
@@ -47,22 +55,14 @@ export const applyReadReceipts = (messages, { userId, messageIds, timestamp }) =
       return msg;
     }
 
+    hasChanges = true;
     return {
       ...msg,
       readers: [...(msg.readers || []), { userId, readAt: timestamp || new Date() }],
     };
   });
 
-export const appendIncomingMessage = (messages, incoming) => {
-  if (!incoming?._id) {
-    return messages;
-  }
-
-  if (messages.some(msg => msg._id === incoming._id)) {
-    return messages;
-  }
-
-  return [...messages, incoming];
+  return hasChanges ? nextMessages : messages;
 };
 
 export const createRoomEventHandlers = ({
@@ -82,6 +82,49 @@ export const createRoomEventHandlers = ({
   handleReactionUpdate,
   showRejectedMessage,
 }) => {
+  let pendingMessages = [];
+  let scheduledFlush = null;
+
+  const flushPendingMessages = () => {
+    scheduledFlush = null;
+    if (!mountedRef.current || pendingMessages.length === 0) return;
+
+    const messagesToAppend = pendingMessages;
+    pendingMessages = [];
+    setMessages(prev => mergeIncomingMessages(prev, messagesToAppend));
+  };
+
+  const scheduleMessageFlush = () => {
+    if (scheduledFlush) return;
+
+    if (typeof globalThis.requestAnimationFrame === 'function') {
+      scheduledFlush = {
+        type: 'frame',
+        id: globalThis.requestAnimationFrame(flushPendingMessages),
+      };
+      return;
+    }
+
+    scheduledFlush = {
+      type: 'timeout',
+      id: setTimeout(flushPendingMessages, 0),
+    };
+  };
+
+  const dispose = () => {
+    if (scheduledFlush?.type === 'frame') {
+      globalThis.cancelAnimationFrame?.(scheduledFlush.id);
+    } else if (scheduledFlush?.type === 'timeout') {
+      clearTimeout(scheduledFlush.id);
+    }
+
+    pendingMessages.forEach(message => {
+      processedMessageIds.current.delete(message._id);
+    });
+    pendingMessages = [];
+    scheduledFlush = null;
+  };
+
   const handlePreviousMessages = (response) => {
     if (!mountedRef.current || messageProcessingRef.current) return;
     try {
@@ -103,6 +146,7 @@ export const createRoomEventHandlers = ({
   };
 
   return {
+    dispose,
     onParticipantsUpdate: (participants) => {
       if (!mountedRef.current) return;
       setRoom(prev => ({ ...prev, participants: participants || [] }));
@@ -115,7 +159,8 @@ export const createRoomEventHandlers = ({
       if (!mountedRef.current || messageProcessingRef.current) return;
       if (!incoming?._id || processedMessageIds.current.has(incoming._id)) return;
       processedMessageIds.current.add(incoming._id);
-      setMessages(prev => appendIncomingMessage(prev, incoming));
+      pendingMessages.push(incoming);
+      scheduleMessageFlush();
     },
     onPreviousMessagesLoaded: handlePreviousMessages,
     onMessageReactionUpdate: (data) => {

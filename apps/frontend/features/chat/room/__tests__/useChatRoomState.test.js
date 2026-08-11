@@ -124,6 +124,20 @@ describe('chatRoomReducer', () => {
     })).toBe(state);
   });
 
+  it('keeps the same state when a message updater has no changes', () => {
+    const state = {
+      ...createInitialChatRoomState(),
+      messages: [{ _id: 'message-1' }],
+    };
+
+    expect(
+      chatRoomReducer(state, {
+        type: 'messages/changed',
+        messages: currentMessages => currentMessages,
+      })
+    ).toBe(state);
+  });
+
   it('handles semantic connection lifecycle transitions', () => {
     const state = {
       ...createInitialChatRoomState(),

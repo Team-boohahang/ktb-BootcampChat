@@ -1,12 +1,15 @@
-import { describe, expect, it, vi } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
-  appendIncomingMessage,
   applyReadReceipts,
   createRoomEventHandlers,
   processLoadedRoomMessages,
 } from '../roomEventHandlers';
 
 describe('roomEventHandlers', () => {
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
   it('processes loaded messages through the shared message list reducer', () => {
     const processedMessageIds = { current: new Set(['message-1']) };
     const initialLoadCompletedRef = { current: false };
@@ -65,18 +68,40 @@ describe('roomEventHandlers', () => {
     ]);
   });
 
-  it('appends incoming messages only once', () => {
-    const currentMessages = [{ _id: 'message-1' }];
+  it('keeps the same message array when read receipts contain no changes', () => {
+    const messages = [
+      {
+        _id: 'message-1',
+        readers: [{ userId: 'user-2', readAt: 'existing' }],
+      },
+    ];
 
-    expect(appendIncomingMessage(currentMessages, { _id: 'message-1' })).toBe(
-      currentMessages
-    );
     expect(
-      appendIncomingMessage(currentMessages, { _id: 'message-2' })
-    ).toEqual([{ _id: 'message-1' }, { _id: 'message-2' }]);
+      applyReadReceipts(messages, {
+        userId: 'user-2',
+        messageIds: ['message-1'],
+      })
+    ).toBe(messages);
+  });
+
+  it('does not update message state when loaded messages are already processed', () => {
+    const processedMessageIds = { current: new Set(['message-1']) };
+    const setMessages = vi.fn();
+
+    processLoadedRoomMessages({
+      loadedMessages: [{ _id: 'message-1', timestamp: '2026-07-07T00:00:00.000Z' }],
+      hasMore: false,
+      processedMessageIds,
+      setMessages,
+      setHasMoreMessages: vi.fn(),
+      initialLoadCompletedRef: { current: true },
+    });
+
+    expect(setMessages).not.toHaveBeenCalled();
   });
 
   it('keeps live messages when the updater is invoked twice (StrictMode)', () => {
+    vi.useFakeTimers();
     const mountedRef = { current: true };
     const processedMessageIds = { current: new Set() };
     let committed = [];
@@ -108,11 +133,15 @@ describe('roomEventHandlers', () => {
     });
 
     handlers.onMessage({ _id: 'message-live' });
+    handlers.onMessage({ _id: 'message-live' });
+    vi.runAllTimers();
 
     expect(committed.map(message => message._id)).toEqual(['message-live']);
+    expect(setMessages).toHaveBeenCalledTimes(1);
   });
 
   it('creates room event handlers with mounted and processing guards', () => {
+    vi.useFakeTimers();
     const mountedRef = { current: true };
     const messageProcessingRef = { current: false };
     const processedMessageIds = { current: new Set() };
@@ -154,6 +183,7 @@ describe('roomEventHandlers', () => {
       timestamp: '2026-07-07T00:00:00.000Z',
     });
     handlers.onMessage({ _id: 'message-1' });
+    vi.runAllTimers();
     handlers.onPreviousMessagesLoaded({ messages: [{ _id: 'message-2' }], hasMore: true });
     handlers.onMessageReactionUpdate({ messageId: 'message-1' });
     handlers.onSessionEnded();
@@ -168,5 +198,83 @@ describe('roomEventHandlers', () => {
     expect(logout).toHaveBeenCalledTimes(1);
     expect(onReplace).toHaveBeenCalledWith('/?error=session_expired');
     expect(showRejectedMessage).toHaveBeenCalledWith('blocked');
+  });
+
+  it('batches unique live messages into one state update per frame', () => {
+    vi.useFakeTimers();
+    const processedMessageIds = { current: new Set() };
+    let committed = [];
+    const setMessages = vi.fn(updater => {
+      committed = updater(committed);
+    });
+    const handlers = createRoomEventHandlers({
+      mountedRef: { current: true },
+      messageProcessingRef: { current: false },
+      processedMessageIds,
+      initialLoadCompletedRef: { current: true },
+      processMessages: vi.fn(),
+      setRoom: vi.fn(),
+      setMessages,
+      setLoadingMessages: vi.fn(),
+      setError: vi.fn(),
+      setHasMoreMessages: vi.fn(),
+      cleanup: vi.fn(),
+      logout: vi.fn(),
+      onReplace: vi.fn(),
+      handleReactionUpdate: vi.fn(),
+      showRejectedMessage: vi.fn(),
+    });
+
+    handlers.onMessage({
+      _id: 'message-2',
+      timestamp: '2026-07-07T00:00:02.000Z',
+    });
+    handlers.onMessage({
+      _id: 'message-1',
+      timestamp: '2026-07-07T00:00:01.000Z',
+    });
+    handlers.onMessage({
+      _id: 'message-2',
+      timestamp: '2026-07-07T00:00:02.000Z',
+    });
+
+    expect(setMessages).not.toHaveBeenCalled();
+    vi.runAllTimers();
+
+    expect(setMessages).toHaveBeenCalledTimes(1);
+    expect(committed.map(message => message._id)).toEqual([
+      'message-1',
+      'message-2',
+    ]);
+  });
+
+  it('releases pending message ids when handlers are disposed before flush', () => {
+    vi.useFakeTimers();
+    const processedMessageIds = { current: new Set() };
+    const setMessages = vi.fn();
+    const handlers = createRoomEventHandlers({
+      mountedRef: { current: true },
+      messageProcessingRef: { current: false },
+      processedMessageIds,
+      initialLoadCompletedRef: { current: true },
+      processMessages: vi.fn(),
+      setRoom: vi.fn(),
+      setMessages,
+      setLoadingMessages: vi.fn(),
+      setError: vi.fn(),
+      setHasMoreMessages: vi.fn(),
+      cleanup: vi.fn(),
+      logout: vi.fn(),
+      onReplace: vi.fn(),
+      handleReactionUpdate: vi.fn(),
+      showRejectedMessage: vi.fn(),
+    });
+
+    handlers.onMessage({ _id: 'message-1' });
+    handlers.dispose();
+    vi.runAllTimers();
+
+    expect(setMessages).not.toHaveBeenCalled();
+    expect(processedMessageIds.current.has('message-1')).toBe(false);
   });
 });

@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   deriveUniqueSortedMessages,
+  mergeIncomingMessages,
   mergeUniqueSortedMessages,
 } from '../useMessageList';
 
@@ -74,5 +75,35 @@ describe('mergeUniqueSortedMessages', () => {
     expect(second.messages).toEqual(first.messages);
     expect(second.processedMessageIds).toEqual(first.processedMessageIds);
     expect(processedIds).toEqual(new Set(['existing']));
+  });
+
+  it('appends chronological live messages without scanning for duplicate ids', () => {
+    const currentMessages = [
+      { _id: 'message-1', timestamp: '2026-01-01T00:00:01Z' },
+    ];
+    const incoming = {
+      _id: 'message-2',
+      timestamp: '2026-01-01T00:00:02Z',
+    };
+
+    expect(mergeIncomingMessages(currentMessages, [incoming])).toEqual([
+      currentMessages[0],
+      incoming,
+    ]);
+  });
+
+  it('inserts out-of-order live messages in timestamp order', () => {
+    const messages = [
+      { _id: 'message-1', timestamp: '2026-01-01T00:00:01Z' },
+      { _id: 'message-3', timestamp: '2026-01-01T00:00:03Z' },
+    ];
+    const incoming = {
+      _id: 'message-2',
+      timestamp: '2026-01-01T00:00:02Z',
+    };
+
+    expect(
+      mergeIncomingMessages(messages, [incoming]).map((message) => message._id)
+    ).toEqual(['message-1', 'message-2', 'message-3']);
   });
 });
