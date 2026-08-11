@@ -16,7 +16,7 @@ describe('useAutoScroll', () => {
     vi.useRealTimers();
   });
 
-  it('keeps a single smooth scroll and moves consecutive messages to the bottom immediately', () => {
+  it('positions the initial batch before paint and keeps consecutive live messages at the bottom', () => {
     vi.useFakeTimers();
     const currentUserId = 'user-1';
     const { result, rerender } = renderHook(
@@ -30,6 +30,16 @@ describe('useAutoScroll', () => {
       messages: [{ _id: 'message-1', sender: currentUserId }],
     });
 
+    expect(container.scrollTop).toBe(container.scrollHeight);
+    expect(container.scrollTo).not.toHaveBeenCalled();
+
+    rerender({
+      messages: [
+        { _id: 'message-1', sender: currentUserId },
+        { _id: 'message-2', sender: currentUserId },
+      ],
+    });
+
     expect(container.scrollTo).toHaveBeenCalledTimes(1);
     expect(container.scrollTo).toHaveBeenLastCalledWith({
       top: container.scrollHeight,
@@ -40,6 +50,7 @@ describe('useAutoScroll', () => {
       messages: [
         { _id: 'message-1', sender: currentUserId },
         { _id: 'message-2', sender: currentUserId },
+        { _id: 'message-3', sender: currentUserId },
       ],
     });
 
@@ -62,11 +73,18 @@ describe('useAutoScroll', () => {
     result.current.containerRef.current = container;
 
     rerender({ messages: [{ _id: 'message-1', sender: currentUserId }] });
+    rerender({
+      messages: [
+        { _id: 'message-1', sender: currentUserId },
+        { _id: 'message-2', sender: currentUserId },
+      ],
+    });
     vi.advanceTimersByTime(300);
     rerender({
       messages: [
         { _id: 'message-1', sender: currentUserId },
         { _id: 'message-2', sender: currentUserId },
+        { _id: 'message-3', sender: currentUserId },
       ],
     });
 
@@ -82,17 +100,24 @@ describe('useAutoScroll', () => {
     const currentUserId = 'user-1';
     const remoteUserId = 'user-2';
     const { result, rerender } = renderHook(
-      ({ messages }) => useAutoScroll(messages, currentUserId),
-      { initialProps: { messages: [] } },
+      ({ messages, threshold }) => useAutoScroll(messages, currentUserId, false, threshold),
+      { initialProps: { messages: [], threshold: 100 } },
     );
     const container = createScrollContainer();
     result.current.containerRef.current = container;
 
-    rerender({ messages: [{ _id: 'message-1', sender: remoteUserId }] });
-    expect(container.scrollTo).toHaveBeenCalledTimes(1);
+    rerender({
+      messages: [{ _id: 'message-1', sender: remoteUserId }],
+      threshold: 101,
+    });
+    expect(container.scrollTop).toBe(container.scrollHeight);
+    expect(container.scrollTo).not.toHaveBeenCalled();
 
     container.scrollTop = 100;
-    vi.advanceTimersByTime(300);
+    const scrollHandler = container.addEventListener.mock.calls.find(
+      ([eventName]) => eventName === 'scroll'
+    )[1];
+    scrollHandler();
 
     expect(result.current.isNearBottom()).toBe(false);
 
@@ -101,9 +126,10 @@ describe('useAutoScroll', () => {
         { _id: 'message-1', sender: remoteUserId },
         { _id: 'message-2', sender: remoteUserId },
       ],
+      threshold: 101,
     });
 
-    expect(container.scrollTo).toHaveBeenCalledTimes(1);
+    expect(container.scrollTo).not.toHaveBeenCalled();
   });
 
   it('restores scroll position without scrolling to an unchanged last message after prepending history', () => {

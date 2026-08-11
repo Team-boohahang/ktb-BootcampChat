@@ -84,4 +84,18 @@ describe('ChatMessages', () => {
     expect(messageWrapper.style.containIntrinsicSize).toBe('');
     expect(screen.getByText('이전 메시지를 불러오는 중...')).toBeInTheDocument();
   });
+
+  it('reserves scrollbar space before the message list overflows', () => {
+    render(
+      React.createElement(ChatMessages, {
+        messages: [],
+        currentUser: { id: 'me' },
+        hasMoreMessages: false,
+      })
+    );
+
+    expect(screen.getByTestId('chat-messages-container')).toHaveStyle({
+      scrollbarGutter: 'stable',
+    });
+  });
 });

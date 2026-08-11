@@ -1,4 +1,4 @@
-import { useRef, useEffect, useCallback } from 'react';
+import { useRef, useEffect, useLayoutEffect, useCallback } from 'react';
 
 /**
  * 채팅 메시지 자동 스크롤 훅
@@ -117,7 +117,7 @@ export const useAutoScroll = (
   /**
    * 이전 메시지 로딩 완료 시 스크롤 위치 복원
    */
-  useEffect(() => {
+  useLayoutEffect(() => {
     const container = containerRef.current;
     if (!container || !isRestoringRef.current || isLoadingMessages) return;
 
@@ -132,6 +132,29 @@ export const useAutoScroll = (
   }, [messages, isLoadingMessages]);
 
   /**
+   * 초기 메시지는 브라우저가 그리기 전에 최하단에 배치한다.
+   * effect 이후 이동시키면 사용자가 목록 상단을 잠깐 본 뒤 하단으로 점프하게 된다.
+   */
+  useLayoutEffect(() => {
+    const container = containerRef.current;
+    if (
+      !container ||
+      isRestoringRef.current ||
+      isLoadingMessages ||
+      messages.length === 0 ||
+      previousMessagesLengthRef.current !== 0
+    ) {
+      return;
+    }
+
+    const latestMessage = messages[messages.length - 1];
+    previousMessagesLengthRef.current = messages.length;
+    previousLastMessageIdRef.current = latestMessage?._id || latestMessage?.id || null;
+    container.scrollTop = container.scrollHeight;
+    isNearBottomRef.current = true;
+  }, [messages, isLoadingMessages]);
+
+  /**
    * 메시지 추가 시 자동 스크롤 로직
    */
   useEffect(() => {
@@ -143,8 +166,15 @@ export const useAutoScroll = (
     const latestMessage = messages[messages.length - 1];
     const latestMessageId = latestMessage?._id || latestMessage?.id || null;
 
+    if (messages.length === 0) {
+      previousMessagesLengthRef.current = 0;
+      previousLastMessageIdRef.current = null;
+      isNearBottomRef.current = true;
+      return;
+    }
+
     // 메시지가 추가되지 않았으면 무시
-    if (messages.length === 0 || messages.length === previousMessagesLengthRef.current) {
+    if (messages.length === previousMessagesLengthRef.current) {
       previousLastMessageIdRef.current = latestMessageId;
       return;
     }
@@ -156,9 +186,16 @@ export const useAutoScroll = (
       return;
     }
 
+    const isInitialMessageBatch = previousMessagesLengthRef.current === 0;
     const hasNewLastMessage = latestMessageId !== previousLastMessageIdRef.current;
     previousMessagesLengthRef.current = messages.length;
     previousLastMessageIdRef.current = latestMessageId;
+
+    // ref가 늦게 연결된 예외 상황에서도 초기 배치는 애니메이션 없이 처리한다.
+    if (isInitialMessageBatch) {
+      scrollToBottom('auto');
+      return;
+    }
 
     // 과거 메시지 prepend 또는 정렬 중간 삽입은 하단 메시지를 바꾸지 않는다.
     if (!latestMessage || !hasNewLastMessage) return;
@@ -178,16 +215,6 @@ export const useAutoScroll = (
       // 남이 쓴 메시지 + 상단에 있음 → 스크롤 안함
     }
   }, [messages, currentUserId, scrollToBottom, isLoadingMessages]);
-
-  /**
-   * 초기 로드 시 최하단으로 스크롤
-   */
-  useEffect(() => {
-    if (messages.length > 0 && previousMessagesLengthRef.current === 0) {
-      // 초기 로드는 즉시 스크롤 (애니메이션 없이)
-      setTimeout(() => scrollToBottom('auto'), 100);
-    }
-  }, [messages.length, scrollToBottom]);
 
   return {
     containerRef,

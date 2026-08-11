@@ -101,6 +101,7 @@ const ChatMessages = ({
     <VStack
       ref={containerRef}
       className="h-full overflow-y-auto overflow-x-hidden [overflow-scrolling:touch]"
+      style={{ scrollbarGutter: 'stable' }}
       $css={{
         gap: '$200',
         padding: '$300',
