@@ -76,9 +76,7 @@ export const useRoomHandling = ({
       roomEventsUnsubscribeRef.current = null;
     }
 
-    roomEventsUnsubscribeRef.current = socketClient.subscribeRoomEvents(
-      socketRef.current,
-      createRoomEventHandlers({
+    const handlers = createRoomEventHandlers({
         mountedRef,
         messageProcessingRef,
         processedMessageIds,
@@ -94,8 +92,18 @@ export const useRoomHandling = ({
         onReplace,
         handleReactionUpdate,
         showRejectedMessage: Toast.error.bind(Toast),
-      })
+      });
+    const unsubscribe = socketClient.subscribeRoomEvents(
+      socketRef.current,
+      handlers
     );
+    roomEventsUnsubscribeRef.current = () => {
+      try {
+        unsubscribe();
+      } finally {
+        handlers.dispose();
+      }
+    };
   }, [
     processMessages,
     setHasMoreMessages,

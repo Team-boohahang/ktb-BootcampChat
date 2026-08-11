@@ -51,11 +51,14 @@ export const chatRoomReducer = (state, action) => {
         ...state,
         room: resolveValue(action.room, state.room),
       };
-    case 'messages/changed':
+    case 'messages/changed': {
+      const messages = resolveValue(action.messages, state.messages);
+      if (messages === state.messages) return state;
       return {
         ...state,
-        messages: resolveValue(action.messages, state.messages),
+        messages,
       };
+    }
     case 'error/changed':
       return {
         ...state,

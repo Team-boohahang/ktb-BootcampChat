@@ -261,7 +261,6 @@ export const useChatRoomLifecycle = ({
     if (mountedRef.current) {
       messageLoadAttemptRef.current = 0;
       previousMessagesRef.current.clear();
-      processedMessageIds.current.clear();
       initialLoadCompletedRef.current = false;
       loadInitialMessages(roomId);
     }
@@ -271,7 +270,6 @@ export const useChatRoomLifecycle = ({
     mountedRef,
     messageLoadAttemptRef,
     previousMessagesRef,
-    processedMessageIds,
     initialLoadCompletedRef,
   ]);
 
