@@ -86,18 +86,35 @@ public class MessageLoader {
         
         var messageIds = sortedMessages.stream().map(Message::getId).toList();
         senderCount = (int) sortedMessages.stream()
-                .map(Message::getSenderId)
-                .filter(id -> id != null && !id.isBlank())
-                .distinct()
-                .count();
+                  .map(Message::getSenderId)
+                  .filter(id -> id != null && !id.isBlank())
+                  .distinct()
+                  .count();
+
         fileMessageCount = sortedMessages.stream()
-                .filter(message -> message.getFileId() != null && !message.getFileId().isBlank())
-                .count();
+                  .filter(message -> message.getFileId() != null && !message.getFileId().isBlank())
+                  .count();
+
         sortAndIdsMs = elapsedMillis(stepStartedAt);
 
         stepStartedAt = System.nanoTime();
-        messageReadStatusService.updateReadStatus(messageIds, userId);
+
+        boolean readStatusUpdated =
+                messageReadStatusService.updateReadStatus(
+                        roomId,
+                        messageIds,
+                        userId
+                );
+
         readStatusUpdateMs = elapsedMillis(stepStartedAt);
+
+        if (!readStatusUpdated) {
+            log.warn(
+                "Failed to update read status while loading messages for room {}",
+                roomId
+            );
+        }
+               
 
         stepStartedAt = System.nanoTime();
         Map<String, User> usersById = findUsersById(sortedMessages);

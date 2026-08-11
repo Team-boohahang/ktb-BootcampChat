@@ -70,7 +70,14 @@ public class MessageReadHandler {
                 return;
             }
             
-            messageReadStatusService.updateReadStatus(data.getMessageIds(), userId);
+            boolean updated = messageReadStatusService
+                    .updateReadStatus(roomId, data.getMessageIds(), userId);
+            if (!updated) {
+                client.sendEvent(ERROR, Map.of(
+                        "message", "읽음 상태 업데이트 중 오류가 발생했습니다."
+                ));
+                return;
+            }
 
             MessagesReadResponse response = new MessagesReadResponse(userId, data.getMessageIds());
 
