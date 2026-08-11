@@ -171,7 +171,6 @@ public class ChatMessageHandler {
 
             socketIOServer.getRoomOperations(roomId)
                     .sendEvent(MESSAGE, messageResponse);
-            client.sendEvent(MESSAGE, messageResponse);
 
             roomActivityNotifier.notifyMessageStored(roomId);
 

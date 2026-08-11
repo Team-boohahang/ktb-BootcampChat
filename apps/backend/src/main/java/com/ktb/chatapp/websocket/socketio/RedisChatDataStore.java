@@ -2,6 +2,7 @@ package com.ktb.chatapp.websocket.socketio;
 
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import java.time.Duration;
 import java.util.Optional;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -19,6 +20,7 @@ public class RedisChatDataStore implements ChatDataStore {
 
     private final StringRedisTemplate redisTemplate;
     private final ObjectMapper objectMapper;
+    private final Duration stateTtl;
 
     @Override
     public <T> Optional<T> get(String key, Class<T> type) {
@@ -38,7 +40,13 @@ public class RedisChatDataStore implements ChatDataStore {
     @Override
     public void set(String key, Object value) {
         try {
-            redisTemplate.opsForValue().set(buildKey(key), objectMapper.writeValueAsString(value));
+            String redisKey = buildKey(key);
+            String serializedValue = objectMapper.writeValueAsString(value);
+            if (stateTtl == null || stateTtl.isZero() || stateTtl.isNegative()) {
+                redisTemplate.opsForValue().set(redisKey, serializedValue);
+                return;
+            }
+            redisTemplate.opsForValue().set(redisKey, serializedValue, stateTtl);
         } catch (JsonProcessingException e) {
             throw new IllegalStateException("Failed to serialize Socket.IO chat data for key=" + key, e);
         }
