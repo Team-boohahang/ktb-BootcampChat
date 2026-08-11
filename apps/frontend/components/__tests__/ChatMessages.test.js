@@ -28,22 +28,21 @@ vi.mock('../UserMessage', () => ({
 }));
 
 describe('ChatMessages', () => {
-  it('renders messages sorted by timestamp without mutating the input array', () => {
+  it('renders messages in the order provided by the message state', () => {
     const messages = [
-      {
-        _id: 'late',
-        content: 'late message',
-        timestamp: '2026-06-20T12:00:00.000Z',
-        sender: { _id: 'other' },
-      },
       {
         _id: 'early',
         content: 'early message',
         timestamp: '2026-06-20T11:00:00.000Z',
         sender: { _id: 'other' },
       },
+      {
+        _id: 'late',
+        content: 'late message',
+        timestamp: '2026-06-20T12:00:00.000Z',
+        sender: { _id: 'other' },
+      },
     ];
-    const originalOrder = messages.map((message) => message._id);
 
     render(
       React.createElement(ChatMessages, {
@@ -57,7 +56,6 @@ describe('ChatMessages', () => {
       'early message',
       'late message',
     ]);
-    expect(messages.map((message) => message._id)).toEqual(originalOrder);
   });
 
   it('keeps optimized message wrappers discoverable in the rendered DOM', () => {

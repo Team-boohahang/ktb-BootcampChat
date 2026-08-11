@@ -150,15 +150,10 @@ export const useAutoScroll = (
       return;
     }
 
-    // 새로 추가된 메시지들 확인
-    const newMessages = messages.slice(previousMessagesLengthRef.current);
     previousMessagesLengthRef.current = messages.length;
 
-    // 새 메시지가 없으면 무시
-    if (newMessages.length === 0) return;
-
     // 가장 최근 메시지 확인
-    const latestMessage = newMessages[newMessages.length - 1];
+    const latestMessage = messages[messages.length - 1];
     if (!latestMessage) return;
 
     // 메시지 발신자 확인
