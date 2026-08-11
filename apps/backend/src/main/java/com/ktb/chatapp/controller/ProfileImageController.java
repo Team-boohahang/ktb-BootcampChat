@@ -9,8 +9,10 @@ import io.swagger.v3.oas.annotations.responses.ApiResponse;
 import io.swagger.v3.oas.annotations.responses.ApiResponses;
 import io.swagger.v3.oas.annotations.security.SecurityRequirement;
 import io.swagger.v3.oas.annotations.tags.Tag;
+import java.util.concurrent.TimeUnit;
 import lombok.RequiredArgsConstructor;
 import org.springframework.core.io.Resource;
+import org.springframework.http.CacheControl;
 import org.springframework.http.MediaType;
 import org.springframework.http.MediaTypeFactory;
 import org.springframework.http.ResponseEntity;
@@ -46,8 +48,11 @@ public class ProfileImageController {
             return ResponseEntity.badRequest().build();
         }
 
+        // 파일명이 업로드마다 타임스탬프+랜덤값으로 새로 생성(geneerateSateName)
+        // 같은 URL은 항상 같은 내용을 가리킴 -> 재검증 없이 캐싱 가능하도록
         return storagePort.open(StorageKey.profile(filename))
                 .map(resource -> ResponseEntity.ok()
+                        .cacheControl(CacheControl.maxAge(365, TimeUnit.DAYS).cachePublic().immutable())
                         .contentType(contentTypeOf(filename))
                         .body(resource))
                 .orElseGet(() -> ResponseEntity.notFound().build());
