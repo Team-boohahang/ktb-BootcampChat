@@ -126,6 +126,8 @@ tail -f logs/app.log
    # 단일 인스턴스: memory
    # 멀티 인스턴스: redis
    SOCKETIO_STORE_TYPE=memory
+   SOCKETIO_REDIS_STATE_TTL_HOURS=168
+   ROOM_ACTIVITY_DEBOUNCE_MS=1000
 
    # OpenAI API
    OPENAI_API_KEY=sk-...
@@ -162,6 +164,7 @@ docker image inspect ktb-chat-backend:java25 --format '{{json .Config.ExposedPor
 
 ```bash
 SOCKETIO_STORE_TYPE=redis
+SOCKETIO_REDIS_STATE_TTL_HOURS=168
 REDIS_HOST=<shared-redis-private-host>
 REDIS_PORT=6379
 REDIS_PASSWORD=<password-or-empty>

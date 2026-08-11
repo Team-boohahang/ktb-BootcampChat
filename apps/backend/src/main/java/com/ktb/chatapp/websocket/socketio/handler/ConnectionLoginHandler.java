@@ -12,6 +12,8 @@ import java.time.Duration;
 import java.util.HashSet;
 import java.util.Map;
 import java.util.Set;
+import java.util.concurrent.ScheduledExecutorService;
+import java.util.concurrent.TimeUnit;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.stereotype.Component;
@@ -36,17 +38,20 @@ public class ConnectionLoginHandler {
     private final ConnectedUsers connectedUsers;
     private final UserRooms userRooms;
     private final RoomJoinHandler roomJoinHandler;
+    private final ScheduledExecutorService duplicateLoginScheduler;
 
     public ConnectionLoginHandler(
             SocketIOServer socketIOServer,
             ConnectedUsers connectedUsers,
             UserRooms userRooms,
             RoomJoinHandler roomJoinHandler,
+            ScheduledExecutorService duplicateLoginScheduler,
             MeterRegistry meterRegistry) {
         this.socketIOServer = socketIOServer;
         this.connectedUsers = connectedUsers;
         this.userRooms = userRooms;
         this.roomJoinHandler = roomJoinHandler;
+        this.duplicateLoginScheduler = duplicateLoginScheduler;
 
         // Register gauge metric for concurrent users
         Gauge.builder("socketio.concurrent.users", connectedUsers::size)
@@ -61,7 +66,7 @@ public class ConnectionLoginHandler {
         String userId = user.id();
         
         try {
-            // 다른 노드에 접속된 사용자는 통보 불가
+            // Redis store 모드에서는 socket 전용 room broadcast로 다른 노드의 기존 연결에도 통보한다.
             notifyDuplicateLogin(client, userId);
             client.set("user", user);
             
@@ -151,17 +156,15 @@ public class ConnectionLoginHandler {
                 "timestamp", System.currentTimeMillis()
         ));
         
-        new Thread(() -> {
+        duplicateLoginScheduler.schedule(() -> {
             try {
-                Thread.sleep(Duration.ofSeconds(10));
                 socketIOServer.getRoomOperations(existingSocketRoom).sendEvent(SESSION_ENDED, Map.of(
                         "reason", "duplicate_login",
                         "message", "다른 기기에서 로그인하여 현재 세션이 종료되었습니다."
                 ));
-            } catch (InterruptedException e) {
-                Thread.currentThread().interrupt();
-                log.error("Error in duplicate login notification thread", e);
+            } catch (Exception e) {
+                log.error("Error sending duplicate login session end event", e);
             }
-        }).start();
+        }, Duration.ofSeconds(10).toSeconds(), TimeUnit.SECONDS);
     }
 }

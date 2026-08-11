@@ -1,4 +1,4 @@
-import React, { useCallback, useMemo } from 'react';
+import React, { useCallback } from 'react';
 import { Spinner, Text, VStack } from '@vapor-ui/core';
 import SystemMessage from './SystemMessage';
 import FileMessage from './FileMessage';
@@ -53,26 +53,18 @@ const ChatMessages = ({
     loadingMessages,
     100 // 하단 100px 이내면 자동 스크롤
   );
+  const currentUserId = currentUser?.id;
   const isMine = useCallback((msg) => {
-    if (!msg?.sender || !currentUser?.id) return false;
+    if (!msg?.sender || !currentUserId) return false;
     
     return (
-      msg.sender._id === currentUser.id || 
-      msg.sender.id === currentUser.id ||
-      msg.sender === currentUser.id
+      msg.sender._id === currentUserId ||
+      msg.sender.id === currentUserId ||
+      msg.sender === currentUserId
     );
-  }, [currentUser?.id]);
+  }, [currentUserId]);
 
-  const allMessages = useMemo(() => {
-    if (!Array.isArray(messages)) return [];
-
-    return [...messages].sort((a, b) => {
-      if (!a?.timestamp || !b?.timestamp) return 0;
-      return new Date(a.timestamp) - new Date(b.timestamp);
-    });
-  }, [messages]);
-
-  const renderMessage = useCallback((msg, idx) => {
+  const renderMessage = useCallback((msg) => {
     if (!msg) return null;
 
     const commonProps = {
@@ -89,7 +81,7 @@ const ChatMessages = ({
 
     return (
       <div
-        key={msg._id || `msg-${idx}`}
+        key={msg._id}
         style={{
           contentVisibility: 'auto',
           containIntrinsicSize: '1px 96px',
@@ -109,7 +101,7 @@ const ChatMessages = ({
   return (
     <VStack
       ref={containerRef}
-      className="h-full overflow-y-auto overflow-x-hidden scroll-smooth [overflow-scrolling:touch]"
+      className="h-full overflow-y-auto overflow-x-hidden [overflow-scrolling:touch]"
       $css={{
         gap: '$200',
         padding: '$300',
@@ -139,10 +131,10 @@ const ChatMessages = ({
         <MessageHistoryEnd />
       )}
 
-      {allMessages.length === 0 ? (
+      {messages.length === 0 ? (
         <EmptyMessages />
       ) : (
-        allMessages.map((msg, idx) => renderMessage(msg, idx))
+        messages.map(renderMessage)
       )}
     </VStack>
   );

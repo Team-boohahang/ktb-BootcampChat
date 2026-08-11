@@ -30,6 +30,12 @@ import org.springframework.context.annotation.Role;
 import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.util.StringUtils;
 
+import java.time.Duration;
+import java.util.concurrent.Executors;
+import java.util.concurrent.ScheduledExecutorService;
+import java.util.concurrent.ThreadFactory;
+import java.util.concurrent.atomic.AtomicInteger;
+
 import static org.springframework.beans.factory.config.BeanDefinition.ROLE_INFRASTRUCTURE;
 
 @Slf4j
@@ -81,6 +87,9 @@ public class SocketIOConfig {
 
     @Value("${spring.data.redis.password:}")
     private String redisPassword;
+
+    @Value("${socketio.store.redis-state-ttl-hours:168}")
+    private long redisStateTtlHours;
 
     @Bean(initMethod = "start", destroyMethod = "stop")
     public SocketIOServer socketIOServer(
@@ -162,6 +171,17 @@ public class SocketIOConfig {
         log.info("Socket.IO store factory: redis (multi-instance Pub/Sub enabled)");
         return new RedissonStoreFactory(socketIoRedissonClient);
     }
+
+    @Bean(destroyMethod = "shutdown")
+    public ScheduledExecutorService socketIoDuplicateLoginScheduler() {
+        AtomicInteger threadIndex = new AtomicInteger();
+        ThreadFactory threadFactory = runnable -> {
+            Thread thread = new Thread(runnable, "socketio-duplicate-login-" + threadIndex.incrementAndGet());
+            thread.setDaemon(true);
+            return thread;
+        };
+        return Executors.newSingleThreadScheduledExecutor(threadFactory);
+    }
     
     /**
      * SpringAnnotationScanner는 BeanPostProcessor로서
@@ -184,6 +204,11 @@ public class SocketIOConfig {
     @Bean
     @ConditionalOnProperty(name = "socketio.store.type", havingValue = "redis")
     public ChatDataStore redisChatDataStore(StringRedisTemplate redisTemplate) {
-        return new RedisChatDataStore(redisTemplate, new ObjectMapper().registerModule(new JavaTimeModule()));
+        Duration stateTtl = Duration.ofHours(redisStateTtlHours);
+        log.info("Socket.IO Redis chat state TTL: {} hours", redisStateTtlHours);
+        return new RedisChatDataStore(
+                redisTemplate,
+                new ObjectMapper().registerModule(new JavaTimeModule()),
+                stateTtl);
     }
 }

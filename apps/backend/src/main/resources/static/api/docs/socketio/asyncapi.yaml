@@ -801,6 +801,11 @@ components:
     ChatMessageRequest:
       type: object
       properties:
+        clientMessageId:
+          type: string
+          format: uuid
+          description: 프론트에서 생성한 Optimistic UI 및 재전송 중복 방지용 메시지 ID
+          example: '550e8400-e29b-41d4-a716-446655440000'
         room:
           type: string
           description: 채팅방 ID
@@ -890,8 +895,17 @@ components:
       properties:
         _id:
           type: string
-          description: 메시지 ID
+          description: MongoDB 메시지 ID
           example: '507f1f77bcf86cd799439011'
+        messageId:
+          type: string
+          description: MongoDB 메시지 ID. 하위 호환을 위해 _id와 같은 값을 별도 필드로 제공
+          example: '507f1f77bcf86cd799439011'
+        clientMessageId:
+          type: string
+          format: uuid
+          description: 프론트에서 생성한 메시지 ID. 클라이언트가 제공한 경우에만 포함
+          example: '550e8400-e29b-41d4-a716-446655440000'
         room:
           type: string
           description: 채팅방 ID

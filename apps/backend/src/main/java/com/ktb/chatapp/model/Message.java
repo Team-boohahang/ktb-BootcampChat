@@ -7,9 +7,10 @@ import lombok.Data;
 import lombok.NoArgsConstructor;
 import org.springframework.data.annotation.CreatedDate;
 import org.springframework.data.annotation.Id;
+import org.springframework.data.mongodb.core.index.CompoundIndex;
+import org.springframework.data.mongodb.core.index.CompoundIndexes;
 import org.springframework.data.mongodb.core.mapping.Document;
 import org.springframework.data.mongodb.core.mapping.Field;
-import org.springframework.data.mongodb.core.index.CompoundIndex;
 
 import java.time.LocalDateTime;
 import java.util.ArrayList;
@@ -27,11 +28,21 @@ import java.util.Set;
 @NoArgsConstructor
 @AllArgsConstructor
 @Document(collection = "messages")
-@CompoundIndex(name = "room_timestamp_idx", def = "{'room': 1, 'timestamp': 1}")
+@CompoundIndexes({
+    @CompoundIndex(name = "room_timestamp_idx", def = "{'room': 1, 'timestamp': 1}"),
+    @CompoundIndex(
+        name = "sender_clientMessageId_unique_idx",
+        def = "{'sender': 1, 'clientMessageId': 1}",
+        unique = true,
+        partialFilter = "{ 'clientMessageId': { '$type': 'string' } }"
+    )
+})
 public class Message {
 
     @Id
     private String id;
+
+    private String clientMessageId;
 
     // Mongo 문서 필드명 "room" 사용
     @Field("room")

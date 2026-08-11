@@ -23,7 +23,9 @@ export const useAutoScroll = (
   const containerRef = useRef(null);
   const isNearBottomRef = useRef(true);
   const previousMessagesLengthRef = useRef(0);
+  const previousLastMessageIdRef = useRef(null);
   const isAutoScrollingRef = useRef(false);
+  const autoScrollResetTimeoutRef = useRef(null);
   
   // 스크롤 복원을 위한 ref
   const previousScrollHeightRef = useRef(0);
@@ -50,18 +52,31 @@ export const useAutoScroll = (
     const container = containerRef.current;
     if (!container) return;
 
+    const isSmoothScrollInProgress = behavior === 'smooth' && isAutoScrollingRef.current;
     isAutoScrollingRef.current = true;
 
     container.scrollTo({
       top: container.scrollHeight,
-      behavior
+      // 연속 메시지는 진행 중인 애니메이션을 다시 시작하지 않고 즉시 최하단에 맞춘다.
+      behavior: isSmoothScrollInProgress ? 'auto' : behavior
     });
 
+    if (autoScrollResetTimeoutRef.current) {
+      clearTimeout(autoScrollResetTimeoutRef.current);
+    }
+
     // 스크롤 완료 후 플래그 리셋
-    setTimeout(() => {
+    autoScrollResetTimeoutRef.current = setTimeout(() => {
       isAutoScrollingRef.current = false;
-      isNearBottomRef.current = true;
+      isNearBottomRef.current = checkIsNearBottom();
+      autoScrollResetTimeoutRef.current = null;
     }, 300);
+  }, [checkIsNearBottom]);
+
+  useEffect(() => () => {
+    if (autoScrollResetTimeoutRef.current) {
+      clearTimeout(autoScrollResetTimeoutRef.current);
+    }
   }, []);
 
   /**
@@ -125,27 +140,28 @@ export const useAutoScroll = (
       return;
     }
 
+    const latestMessage = messages[messages.length - 1];
+    const latestMessageId = latestMessage?._id || latestMessage?.id || null;
+
     // 메시지가 추가되지 않았으면 무시
     if (messages.length === 0 || messages.length === previousMessagesLengthRef.current) {
+      previousLastMessageIdRef.current = latestMessageId;
       return;
     }
 
     // 이전보다 메시지가 줄었으면 (초기화 등) 무시
     if (messages.length < previousMessagesLengthRef.current) {
       previousMessagesLengthRef.current = messages.length;
+      previousLastMessageIdRef.current = latestMessageId;
       return;
     }
 
-    // 새로 추가된 메시지들 확인
-    const newMessages = messages.slice(previousMessagesLengthRef.current);
+    const hasNewLastMessage = latestMessageId !== previousLastMessageIdRef.current;
     previousMessagesLengthRef.current = messages.length;
+    previousLastMessageIdRef.current = latestMessageId;
 
-    // 새 메시지가 없으면 무시
-    if (newMessages.length === 0) return;
-
-    // 가장 최근 메시지 확인
-    const latestMessage = newMessages[newMessages.length - 1];
-    if (!latestMessage) return;
+    // 과거 메시지 prepend 또는 정렬 중간 삽입은 하단 메시지를 바꾸지 않는다.
+    if (!latestMessage || !hasNewLastMessage) return;
 
     // 메시지 발신자 확인
     const senderId = latestMessage.sender?._id || latestMessage.sender?.id || latestMessage.sender;

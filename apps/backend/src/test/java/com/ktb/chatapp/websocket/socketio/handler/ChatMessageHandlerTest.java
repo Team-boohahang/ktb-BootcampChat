@@ -28,6 +28,7 @@ import java.time.LocalDateTime;
 import java.util.HashSet;
 import java.util.Map;
 import java.util.Optional;
+import java.util.UUID;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -119,7 +120,7 @@ class ChatMessageHandlerTest {
     }
 
     @Test
-    void handleChatMessage_echoesSavedMessageToSenderSocket() {
+    void handleChatMessage_broadcastsSavedMessageToRoomOnly() {
         SocketIOClient client = mock(SocketIOClient.class);
         BroadcastOperations roomOperations = mock(BroadcastOperations.class);
         SocketUser socketUser = new SocketUser("user-1", "tester", "session-1", "socket-1");
@@ -160,11 +161,178 @@ class ChatMessageHandlerTest {
         handler.handleChatMessage(client, request);
 
         ArgumentCaptor<MessageResponse> payloadCaptor = ArgumentCaptor.forClass(MessageResponse.class);
-        verify(client).sendEvent(eq(MESSAGE), payloadCaptor.capture());
-        verify(roomOperations).sendEvent(eq(MESSAGE), any(MessageResponse.class));
+        verify(roomOperations).sendEvent(eq(MESSAGE), payloadCaptor.capture());
+        verify(client, never()).sendEvent(eq(MESSAGE), any(MessageResponse.class));
         verify(roomActivityNotifier).notifyMessageStored(any(Message.class));
         org.junit.jupiter.api.Assertions.assertEquals("message-1", payloadCaptor.getValue().getId());
         org.junit.jupiter.api.Assertions.assertEquals("hello", payloadCaptor.getValue().getContent());
+    }
+
+    @Test
+    void handleChatMessage_preservesClientMessageIdInSavedMessageAndResponse() {
+        SocketIOClient client = mock(SocketIOClient.class);
+        BroadcastOperations roomOperations = mock(BroadcastOperations.class);
+        SocketUser socketUser = new SocketUser("user-1", "tester", "session-1", "socket-1");
+        String clientMessageId = UUID.randomUUID().toString();
+        when(client.get("user")).thenReturn(socketUser);
+
+        when(sessionService.validateSession(socketUser.id(), socketUser.authSessionId()))
+                .thenReturn(SessionValidationResult.valid(null));
+        when(rateLimitService.checkRateLimit(
+                        eq("socket:message:user:" + socketUser.id()), anyInt(), any()))
+                .thenReturn(RateLimitCheckResult.allowed(10000, 9999, 60, System.currentTimeMillis() / 1000 + 60, 60));
+
+        User user = new User();
+        user.setId("user-1");
+        user.setName("Tester");
+        when(userRepository.findById("user-1")).thenReturn(Optional.of(user));
+
+        Room room = new Room();
+        room.setId("room-1");
+        room.setParticipantIds(new HashSet<>(java.util.List.of("user-1")));
+        when(roomRepository.findById("room-1")).thenReturn(Optional.of(room));
+        when(bannedWordChecker.containsBannedWord("hello")).thenReturn(false);
+        when(messageRepository.findBySenderIdAndClientMessageId("user-1", clientMessageId))
+                .thenReturn(Optional.empty());
+        when(socketIOServer.getRoomOperations("room-1")).thenReturn(roomOperations);
+        when(messageRepository.save(any(Message.class))).thenAnswer(invocation -> {
+            Message message = invocation.getArgument(0);
+            message.setId("message-1");
+            message.setTimestamp(LocalDateTime.of(2026, 7, 7, 9, 0));
+            message.setType(MessageType.text);
+            return message;
+        });
+
+        ChatMessageRequest request =
+                ChatMessageRequest.builder()
+                        .clientMessageId(clientMessageId)
+                        .room("room-1")
+                        .type("text")
+                        .content("hello")
+                        .build();
+
+        handler.handleChatMessage(client, request);
+
+        ArgumentCaptor<Message> savedMessageCaptor = ArgumentCaptor.forClass(Message.class);
+        verify(messageRepository).save(savedMessageCaptor.capture());
+        org.junit.jupiter.api.Assertions.assertEquals(
+                clientMessageId, savedMessageCaptor.getValue().getClientMessageId());
+
+        ArgumentCaptor<MessageResponse> payloadCaptor = ArgumentCaptor.forClass(MessageResponse.class);
+        verify(roomOperations).sendEvent(eq(MESSAGE), payloadCaptor.capture());
+        MessageResponse response = payloadCaptor.getValue();
+        org.junit.jupiter.api.Assertions.assertEquals("message-1", response.getId());
+        org.junit.jupiter.api.Assertions.assertEquals("message-1", response.getMessageId());
+        org.junit.jupiter.api.Assertions.assertEquals(clientMessageId, response.getClientMessageId());
+    }
+
+    @Test
+    void handleChatMessage_returnsExistingMessageForDuplicateClientMessageIdWithoutSideEffects() {
+        SocketIOClient client = mock(SocketIOClient.class);
+        SocketUser socketUser = new SocketUser("user-1", "tester", "session-1", "socket-1");
+        String clientMessageId = UUID.randomUUID().toString();
+        when(client.get("user")).thenReturn(socketUser);
+
+        when(sessionService.validateSession(socketUser.id(), socketUser.authSessionId()))
+                .thenReturn(SessionValidationResult.valid(null));
+        when(rateLimitService.checkRateLimit(
+                        eq("socket:message:user:" + socketUser.id()), anyInt(), any()))
+                .thenReturn(RateLimitCheckResult.allowed(10000, 9999, 60, System.currentTimeMillis() / 1000 + 60, 60));
+
+        User user = new User();
+        user.setId("user-1");
+        user.setName("Tester");
+        when(userRepository.findById("user-1")).thenReturn(Optional.of(user));
+
+        Room room = new Room();
+        room.setId("room-1");
+        room.setParticipantIds(new HashSet<>(java.util.List.of("user-1")));
+        when(roomRepository.findById("room-1")).thenReturn(Optional.of(room));
+        when(bannedWordChecker.containsBannedWord("hello")).thenReturn(false);
+
+        Message existing = new Message();
+        existing.setId("message-1");
+        existing.setClientMessageId(clientMessageId);
+        existing.setRoomId("room-1");
+        existing.setSenderId("user-1");
+        existing.setType(MessageType.text);
+        existing.setContent("hello");
+        existing.setTimestamp(LocalDateTime.of(2026, 7, 7, 9, 0));
+        when(messageRepository.findBySenderIdAndClientMessageId("user-1", clientMessageId))
+                .thenReturn(Optional.of(existing));
+
+        ChatMessageRequest request =
+                ChatMessageRequest.builder()
+                        .clientMessageId(clientMessageId)
+                        .room("room-1")
+                        .type("text")
+                        .content("hello")
+                        .build();
+
+        handler.handleChatMessage(client, request);
+
+        ArgumentCaptor<MessageResponse> payloadCaptor = ArgumentCaptor.forClass(MessageResponse.class);
+        verify(client).sendEvent(eq(MESSAGE), payloadCaptor.capture());
+        org.junit.jupiter.api.Assertions.assertEquals("message-1", payloadCaptor.getValue().getId());
+        org.junit.jupiter.api.Assertions.assertEquals("message-1", payloadCaptor.getValue().getMessageId());
+        org.junit.jupiter.api.Assertions.assertEquals(clientMessageId, payloadCaptor.getValue().getClientMessageId());
+        verify(messageRepository, never()).save(any(Message.class));
+        verify(socketIOServer, never()).getRoomOperations(any());
+        verifyNoInteractions(roomActivityNotifier, aiService);
+    }
+
+    @Test
+    void handleChatMessage_rejectsSameClientMessageIdWithDifferentPayload() {
+        SocketIOClient client = mock(SocketIOClient.class);
+        SocketUser socketUser = new SocketUser("user-1", "tester", "session-1", "socket-1");
+        String clientMessageId = UUID.randomUUID().toString();
+        when(client.get("user")).thenReturn(socketUser);
+
+        when(sessionService.validateSession(socketUser.id(), socketUser.authSessionId()))
+                .thenReturn(SessionValidationResult.valid(null));
+        when(rateLimitService.checkRateLimit(
+                        eq("socket:message:user:" + socketUser.id()), anyInt(), any()))
+                .thenReturn(RateLimitCheckResult.allowed(10000, 9999, 60, System.currentTimeMillis() / 1000 + 60, 60));
+
+        User user = new User();
+        user.setId("user-1");
+        when(userRepository.findById("user-1")).thenReturn(Optional.of(user));
+
+        Room room = new Room();
+        room.setId("room-1");
+        room.setParticipantIds(new HashSet<>(java.util.List.of("user-1")));
+        when(roomRepository.findById("room-1")).thenReturn(Optional.of(room));
+        when(bannedWordChecker.containsBannedWord("changed")).thenReturn(false);
+
+        Message existing = new Message();
+        existing.setId("message-1");
+        existing.setClientMessageId(clientMessageId);
+        existing.setRoomId("room-1");
+        existing.setSenderId("user-1");
+        existing.setType(MessageType.text);
+        existing.setContent("original");
+        existing.setTimestamp(LocalDateTime.of(2026, 7, 7, 9, 0));
+        when(messageRepository.findBySenderIdAndClientMessageId("user-1", clientMessageId))
+                .thenReturn(Optional.of(existing));
+
+        ChatMessageRequest request =
+                ChatMessageRequest.builder()
+                        .clientMessageId(clientMessageId)
+                        .room("room-1")
+                        .type("text")
+                        .content("changed")
+                        .build();
+
+        handler.handleChatMessage(client, request);
+
+        @SuppressWarnings("unchecked")
+        ArgumentCaptor<Map<String, Object>> payloadCaptor = ArgumentCaptor.forClass(Map.class);
+        verify(client).sendEvent(eq(ERROR), payloadCaptor.capture());
+        org.junit.jupiter.api.Assertions.assertEquals(
+                "CLIENT_MESSAGE_ID_CONFLICT", payloadCaptor.getValue().get("code"));
+        verify(messageRepository, never()).save(any(Message.class));
+        verify(socketIOServer, never()).getRoomOperations(any());
+        verifyNoInteractions(roomActivityNotifier, aiService);
     }
 
     @Test

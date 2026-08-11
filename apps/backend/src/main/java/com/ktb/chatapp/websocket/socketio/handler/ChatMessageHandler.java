@@ -30,7 +30,9 @@ import java.util.*;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
+import org.springframework.dao.DuplicateKeyException;
 import org.springframework.stereotype.Component;
+import org.springframework.util.StringUtils;
 
 import static com.ktb.chatapp.websocket.socketio.SocketIOEvents.*;
 
@@ -154,9 +156,37 @@ public class ChatMessageHandler {
             }
 
             String messageType = data.getMessageType();
+            String clientMessageId = normalizeClientMessageId(data.getClientMessageId());
+            if (clientMessageId != null && !isUuid(clientMessageId)) {
+                recordError("invalid_client_message_id");
+                client.sendEvent(ERROR, Map.of(
+                        "code", "INVALID_CLIENT_MESSAGE_ID",
+                        "message", "clientMessageId는 UUID 문자열이어야 합니다."
+                ));
+                timerSample.stop(createTimer("error", "invalid_client_message_id"));
+                return;
+            }
+
+            Optional<Message> existingMessage = findExistingClientMessage(socketUser.id(), clientMessageId);
+            if (existingMessage.isPresent()) {
+                Message existing = existingMessage.get();
+                if (isClientMessageConflict(existing, roomId, messageType, messageContent, data.getFileData())) {
+                    sendClientMessageConflict(client, clientMessageId);
+                    timerSample.stop(createTimer("error", "client_message_conflict"));
+                    return;
+                }
+
+                MessageResponse messageResponse = createMessageResponse(existing, sender);
+                client.sendEvent(MESSAGE, messageResponse);
+                timerSample.stop(createTimer("duplicate", messageType));
+                log.debug("Duplicate message returned - messageId: {}, clientMessageId: {}, room: {}",
+                        existing.getId(), clientMessageId, roomId);
+                return;
+            }
+
             Message message = switch (messageType) {
-                case "file" -> handleFileMessage(roomId, socketUser.id(), messageContent, data.getFileData());
-                case "text" -> handleTextMessage(roomId, socketUser.id(), messageContent);
+                case "file" -> handleFileMessage(roomId, socketUser.id(), clientMessageId, messageContent, data.getFileData());
+                case "text" -> handleTextMessage(roomId, socketUser.id(), clientMessageId, messageContent);
                 default -> throw new IllegalArgumentException("Unsupported message type: " + messageType);
             };
 
@@ -166,12 +196,26 @@ public class ChatMessageHandler {
                 return;
             }
 
-            Message savedMessage = messageRepository.save(message);
+            MessageSaveResult saveResult = saveMessage(message, clientMessageId, data);
+            if (saveResult.conflict()) {
+                sendClientMessageConflict(client, clientMessageId);
+                timerSample.stop(createTimer("error", "client_message_conflict"));
+                return;
+            }
+
+            Message savedMessage = saveResult.message();
             MessageResponse messageResponse = createMessageResponse(savedMessage, sender);
+
+            if (!saveResult.created()) {
+                client.sendEvent(MESSAGE, messageResponse);
+                timerSample.stop(createTimer("duplicate", messageType));
+                log.debug("Duplicate message returned after unique-index conflict - messageId: {}, clientMessageId: {}, room: {}",
+                        savedMessage.getId(), clientMessageId, roomId);
+                return;
+            }
 
             socketIOServer.getRoomOperations(roomId)
                     .sendEvent(MESSAGE, messageResponse);
-            client.sendEvent(MESSAGE, messageResponse);
 
             roomActivityNotifier.notifyMessageStored(savedMessage);
 
@@ -198,7 +242,7 @@ public class ChatMessageHandler {
         }
     }
 
-    private Message handleFileMessage(String roomId, String userId, MessageContent messageContent, Map<String, Object> fileData) {
+    private Message handleFileMessage(String roomId, String userId, String clientMessageId, MessageContent messageContent, Map<String, Object> fileData) {
         if (fileData == null || fileData.get("_id") == null) {
             throw new IllegalArgumentException("파일 데이터가 올바르지 않습니다.");
         }
@@ -211,6 +255,7 @@ public class ChatMessageHandler {
         }
 
         Message message = new Message();
+        message.setClientMessageId(clientMessageId);
         message.setRoomId(roomId);
         message.setSenderId(userId);
         message.setType(MessageType.file);
@@ -229,12 +274,13 @@ public class ChatMessageHandler {
         return message;
     }
 
-    private Message handleTextMessage(String roomId, String userId, MessageContent messageContent) {
+    private Message handleTextMessage(String roomId, String userId, String clientMessageId, MessageContent messageContent) {
         if (messageContent.isEmpty()) {
             return null; // 빈 메시지는 무시
         }
 
         Message message = new Message();
+        message.setClientMessageId(clientMessageId);
         message.setRoomId(roomId);
         message.setSenderId(userId);
         message.setContent(messageContent.getTrimmedContent());
@@ -248,6 +294,8 @@ public class ChatMessageHandler {
     private MessageResponse createMessageResponse(Message message, User sender) {
         var messageResponse = new MessageResponse();
         messageResponse.setId(message.getId());
+        messageResponse.setMessageId(message.getId());
+        messageResponse.setClientMessageId(message.getClientMessageId());
         messageResponse.setRoomId(message.getRoomId());
         messageResponse.setContent(message.getContent());
         messageResponse.setType(message.getType());
@@ -262,6 +310,83 @@ public class ChatMessageHandler {
         }
 
         return messageResponse;
+    }
+
+    private Optional<Message> findExistingClientMessage(String senderId, String clientMessageId) {
+        if (clientMessageId == null) {
+            return Optional.empty();
+        }
+        return messageRepository.findBySenderIdAndClientMessageId(senderId, clientMessageId);
+    }
+
+    private MessageSaveResult saveMessage(Message message, String clientMessageId, ChatMessageRequest request) {
+        try {
+            return new MessageSaveResult(messageRepository.save(message), true, false);
+        } catch (DuplicateKeyException e) {
+            if (clientMessageId == null) {
+                throw e;
+            }
+
+            Message existing = messageRepository
+                    .findBySenderIdAndClientMessageId(message.getSenderId(), clientMessageId)
+                    .orElseThrow(() -> e);
+            boolean conflict = isClientMessageConflict(
+                    existing,
+                    message.getRoomId(),
+                    message.getType().name(),
+                    MessageContent.from(message.getContent()),
+                    request.getFileData()
+            );
+            return new MessageSaveResult(existing, false, conflict);
+        }
+    }
+
+    private boolean isClientMessageConflict(
+            Message existing,
+            String roomId,
+            String messageType,
+            MessageContent messageContent,
+            Map<String, Object> fileData) {
+        return !Objects.equals(existing.getRoomId(), roomId)
+                || !Objects.equals(existing.getContent(), messageContent.getTrimmedContent())
+                || existing.getType() == null
+                || !Objects.equals(existing.getType().name(), messageType)
+                || !Objects.equals(existing.getFileId(), extractFileId(fileData));
+    }
+
+    private String extractFileId(Map<String, Object> fileData) {
+        if (fileData == null || fileData.get("_id") == null) {
+            return null;
+        }
+        return String.valueOf(fileData.get("_id"));
+    }
+
+    private String normalizeClientMessageId(String clientMessageId) {
+        if (!StringUtils.hasText(clientMessageId)) {
+            return null;
+        }
+        return clientMessageId.trim();
+    }
+
+    private boolean isUuid(String value) {
+        try {
+            UUID.fromString(value);
+            return true;
+        } catch (IllegalArgumentException e) {
+            return false;
+        }
+    }
+
+    private void sendClientMessageConflict(SocketIOClient client, String clientMessageId) {
+        recordError("client_message_conflict");
+        client.sendEvent(ERROR, Map.of(
+                "code", "CLIENT_MESSAGE_ID_CONFLICT",
+                "message", "동일한 clientMessageId가 다른 메시지 payload로 재사용되었습니다.",
+                "clientMessageId", clientMessageId
+        ));
+    }
+
+    private record MessageSaveResult(Message message, boolean created, boolean conflict) {
     }
 
     // Metrics helper methods

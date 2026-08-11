@@ -6,6 +6,7 @@ const yargs = require('yargs/yargs');
 const { hideBin } = require('yargs/helpers');
 const chalk = require('chalk');
 const Table = require('cli-table3');
+const { randomUUID } = require('crypto');
 const { CLIENT_EMIT, SERVER_EMIT } = require('./socket-contract');
 
 // Parse command line arguments
@@ -60,6 +61,16 @@ const argv = yargs(hideBin(process.argv))
     type: 'number',
     default: 1000
   })
+  .option('read-sample-rate', {
+    description: 'Fraction of received messages to mark as read (0.0 - 1.0)',
+    type: 'number',
+    default: 1
+  })
+  .option('reaction-rate', {
+    description: 'Fraction of received messages to react to (0.0 - 1.0)',
+    type: 'number',
+    default: 0.1
+  })
   .help()
   .alias('help', 'h')
   .argv;
@@ -84,10 +95,16 @@ class LoadTester {
       errorsConnection: 0,
       errorsMessage: 0,
       latencies: [],
+      messageAckLatencies: [],
       connectionTimes: [],
+      messageAcksReceived: 0,
+      pendingMessageAcks: 0,
+      missedMessageAcks: 0,
+      disconnectReasons: {},
       startTime: Date.now()
     };
     this.sockets = [];
+    this.pendingMessages = new Map();
     this.metricsInterval = null;
     this.logBuffer = [];
     this.maxLogLines = 10;  // Keep last 10 log lines
@@ -204,6 +221,7 @@ class LoadTester {
       }
 
       const { token, sessionId, user } = authData;
+      const socketPendingMessages = new Set();
 
       // 3. Connect to Socket.IO
       const socket = io(this.config.socketUrl, {
@@ -234,7 +252,7 @@ class LoadTester {
           socket.emit(CLIENT_EMIT.FETCH_PREVIOUS_MESSAGES, { roomId: roomId, limit: 30 });
 
           // Start sending messages
-          this.sendMessages(socket, userId, roomId);
+          this.sendMessages(socket, userId, roomId, socketPendingMessages);
         });
 
         socket.on(SERVER_EMIT.PREVIOUS_MESSAGES_LOADED, (data) => {
@@ -254,15 +272,24 @@ class LoadTester {
         socket.on(SERVER_EMIT.MESSAGE, (data) => {
           this.metrics.messagesReceived++;
 
-          // Mark message as read
-          if (data._id) {
-            socket.emit(CLIENT_EMIT.MARK_MESSAGES_AS_READ, {
-              messageIds: [data._id]
-            });
-            this.metrics.messagesRead++;
+          if (data.clientMessageId && socketPendingMessages.has(data.clientMessageId)) {
+            const sentAt = this.pendingMessages.get(data.clientMessageId);
+            this.metrics.messageAckLatencies.push(Date.now() - sentAt);
+            this.metrics.messageAcksReceived++;
+            this.pendingMessages.delete(data.clientMessageId);
+            socketPendingMessages.delete(data.clientMessageId);
+            this.metrics.pendingMessageAcks = this.pendingMessages.size;
+          }
 
-            // Randomly react to ~10% of messages
-            if (Math.random() < 0.1) {
+          if (data._id) {
+            if (Math.random() < this.config.readSampleRate) {
+              socket.emit(CLIENT_EMIT.MARK_MESSAGES_AS_READ, {
+                messageIds: [data._id]
+              });
+              this.metrics.messagesRead++;
+            }
+
+            if (Math.random() < this.config.reactionRate) {
               socket.emit(CLIENT_EMIT.MESSAGE_REACTION, {
                 messageId: data._id,
                 reaction: '👍',
@@ -295,7 +322,14 @@ class LoadTester {
         });
 
         socket.on('disconnect', (reason) => {
+          this.metrics.missedMessageAcks += socketPendingMessages.size;
+          for (const clientMessageId of socketPendingMessages) {
+            this.pendingMessages.delete(clientMessageId);
+          }
+          socketPendingMessages.clear();
+          this.metrics.pendingMessageAcks = this.pendingMessages.size;
           this.metrics.disconnected++;
+          this.metrics.disconnectReasons[reason] = (this.metrics.disconnectReasons[reason] || 0) + 1;
           this.log('warn', `User ${userId} disconnected:`, reason);
           resolve();
         });
@@ -314,7 +348,7 @@ class LoadTester {
     }
   }
 
-  async sendMessages(socket, userId, roomId) {
+  async sendMessages(socket, userId, roomId, socketPendingMessages) {
     const messageCount = this.config.messages;
     const minDelay = 1000; // 1 second
     const maxDelay = 3000; // 3 seconds
@@ -325,14 +359,19 @@ class LoadTester {
       await this.sleep(delay);
 
       const startTime = Date.now();
+      const clientMessageId = randomUUID();
 
       try {
         socket.emit(CLIENT_EMIT.CHAT_MESSAGE, {
+          clientMessageId,
           room: roomId,
           type: 'text',
           content: `Load test message ${i + 1}/${messageCount} from user ${userId} at ${new Date().toISOString()}`
         });
 
+        this.pendingMessages.set(clientMessageId, startTime);
+        socketPendingMessages.add(clientMessageId);
+        this.metrics.pendingMessageAcks = this.pendingMessages.size;
         this.metrics.messagesSent++;
         this.metrics.latencies.push(Date.now() - startTime);
 
@@ -359,6 +398,9 @@ class LoadTester {
     const avgConnectionTime = this.metrics.connectionTimes.length > 0
       ? (this.metrics.connectionTimes.reduce((a, b) => a + b, 0) / this.metrics.connectionTimes.length).toFixed(2)
       : 0;
+    const avgAckLatency = this.metrics.messageAckLatencies.length > 0
+      ? (this.metrics.messageAckLatencies.reduce((a, b) => a + b, 0) / this.metrics.messageAckLatencies.length).toFixed(2)
+      : 0;
 
     const p95Latency = this.metrics.latencies.length > 0
       ? this.getPercentile(this.metrics.latencies, 95).toFixed(2)
@@ -366,6 +408,15 @@ class LoadTester {
     const p99Latency = this.metrics.latencies.length > 0
       ? this.getPercentile(this.metrics.latencies, 99).toFixed(2)
       : 0;
+    const p95AckLatency = this.metrics.messageAckLatencies.length > 0
+      ? this.getPercentile(this.metrics.messageAckLatencies, 95).toFixed(2)
+      : 0;
+    const p99AckLatency = this.metrics.messageAckLatencies.length > 0
+      ? this.getPercentile(this.metrics.messageAckLatencies, 99).toFixed(2)
+      : 0;
+    const disconnectSummary = Object.entries(this.metrics.disconnectReasons)
+      .map(([reason, count]) => `${reason}: ${count}`)
+      .join(', ') || '-';
 
     const table = new Table({
       head: [chalk.cyan('Metric'), chalk.cyan('Value')],
@@ -378,9 +429,13 @@ class LoadTester {
       [chalk.green('Users Created'), this.metrics.usersCreated],
       [chalk.green('Connected'), this.metrics.connected],
       [chalk.yellow('Disconnected'), this.metrics.disconnected],
+      [chalk.yellow('Disconnect Reasons'), disconnectSummary],
       ['---', '---'],
       [chalk.green('Messages Sent'), this.metrics.messagesSent],
       [chalk.green('Messages Received'), this.metrics.messagesReceived],
+      [chalk.green('Message Acks Received'), this.metrics.messageAcksReceived],
+      [chalk.yellow('Pending Message Acks'), this.metrics.pendingMessageAcks],
+      [chalk.yellow('Missed Message Acks'), this.metrics.missedMessageAcks],
       [chalk.cyan('Messages Marked Read'), this.metrics.messagesRead],
       [chalk.cyan('Read Acks Received'), this.metrics.readAcksReceived],
       ['Messages/sec', (this.metrics.messagesSent / elapsed).toFixed(2)],
@@ -394,6 +449,9 @@ class LoadTester {
       ['Avg Message Latency', `${avgLatency}ms`],
       ['P95 Message Latency', `${p95Latency}ms`],
       ['P99 Message Latency', `${p99Latency}ms`],
+      ['Avg Ack Latency', `${avgAckLatency}ms`],
+      ['P95 Ack Latency', `${p95AckLatency}ms`],
+      ['P99 Ack Latency', `${p99AckLatency}ms`],
       ['Avg Connection Time', `${avgConnectionTime}ms`],
       ['---', '---'],
       [chalk.red('Auth Errors'), this.metrics.errorsAuth],
@@ -453,6 +511,8 @@ class LoadTester {
     console.log(chalk.gray(`  Batch delay:     ${batchDelay}ms`));
     console.log(chalk.gray(`  Total batches:   ${totalBatches}`));
     console.log(chalk.gray(`  Messages/user:   ${this.config.messages}`));
+    console.log(chalk.gray(`  Read sample rate: ${this.config.readSampleRate}`));
+    console.log(chalk.gray(`  Reaction rate:    ${this.config.reactionRate}`));
     console.log(chalk.gray(`  API URL:         ${this.config.apiUrl}`));
     console.log(chalk.gray(`  Socket.IO URL:   ${this.config.socketUrl}`));
     console.log(chalk.gray(`  Room ID:         ${this.config.roomId || 'auto-create'}`));
@@ -521,7 +581,9 @@ const tester = new LoadTester({
   duration: argv.duration,
   messages: argv.messages,
   batchSize: argv.batchSize,
-  batchDelay: argv.batchDelay
+  batchDelay: argv.batchDelay,
+  readSampleRate: Math.max(0, Math.min(1, argv.readSampleRate)),
+  reactionRate: Math.max(0, Math.min(1, argv.reactionRate))
 });
 
 tester.run().catch(error => {

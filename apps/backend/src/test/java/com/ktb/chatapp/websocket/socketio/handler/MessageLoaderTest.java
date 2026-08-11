@@ -79,7 +79,7 @@ class MessageLoaderTest {
                 ))
                 .toList();
         
-        lenient().when(userRepository.findAllById(anySet()))
+        lenient().when(userRepository.findAllById(anyIterable()))
                 .thenReturn(List.of(testUser));
         lenient().doNothing().when(messageReadStatusService).updateReadStatus(anyList(), anyString());
     }
@@ -119,6 +119,44 @@ class MessageLoaderTest {
         // 시간순 정렬 확인 (오름차순: 오래된 것 → 최신 것)
         // [50시간 전, 49시간 전, ..., 21시간 전]
         verifyAscending(result);
+    }
+
+    @Test
+    @DisplayName("loadMessages: 발신자 조회는 메시지별 findById가 아니라 findAllById 한 번으로 처리")
+    void loadMessages_shouldFetchSendersInBatch() {
+        User user1 = User.builder()
+                .id("user-1")
+                .name("User One")
+                .email("user1@example.com")
+                .build();
+        User user2 = User.builder()
+                .id("user-2")
+                .name("User Two")
+                .email("user2@example.com")
+                .build();
+
+        Message first = createMessage("message-1", LocalDateTime.now().minusMinutes(2));
+        first.setSenderId("user-1");
+        Message second = createMessage("message-2", LocalDateTime.now().minusMinutes(1));
+        second.setSenderId("user-2");
+
+        Pageable pageable = PageRequest.of(0, 30, Sort.by("timestamp").descending());
+        Page<Message> messagePage = new PageImpl<>(List.of(second, first), pageable, 2);
+
+        when(messageRepository.findByRoomIdAndTimestampBefore(
+                eq(roomId), any(LocalDateTime.class), any(Pageable.class)))
+                .thenReturn(messagePage);
+        when(userRepository.findAllById(anyIterable()))
+                .thenReturn(List.of(user1, user2));
+
+        FetchMessagesRequest req = new FetchMessagesRequest(roomId, 30, null);
+        FetchMessagesResponse result = messageLoader.loadMessages(req, userId);
+
+        assertThat(result.getMessages()).hasSize(2);
+        assertThat(result.getMessages().get(0).getSender().getId()).isEqualTo("user-1");
+        assertThat(result.getMessages().get(1).getSender().getId()).isEqualTo("user-2");
+        verify(userRepository, times(1)).findAllById(anyIterable());
+        verify(userRepository, never()).findById(anyString());
     }
     
     private static @NotNull Page<Message> getMessagePage(List<Message> first30Messages) {

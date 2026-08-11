@@ -22,6 +22,10 @@ import lombok.NoArgsConstructor;
 public class MessageResponse {
     @JsonProperty("_id")
     private String id;
+
+    private String messageId;
+
+    private String clientMessageId;
     
     @JsonProperty("room")
     private String roomId;
