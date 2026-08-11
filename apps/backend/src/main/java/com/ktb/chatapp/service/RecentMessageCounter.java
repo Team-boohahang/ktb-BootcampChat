@@ -1,8 +1,8 @@
 package com.ktb.chatapp.service;
 
 import com.ktb.chatapp.model.Message;
-import com.ktb.chatapp.repository.MessageRepository;
 import com.ktb.chatapp.service.recentmessage.RecentMessageEntry;
+import com.ktb.chatapp.service.recentmessage.RecentMessageMongoStore;
 import com.ktb.chatapp.service.recentmessage.RecentMessageRedisStore;
 import java.time.Duration;
 import java.time.LocalDateTime;
@@ -13,8 +13,10 @@ import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 import java.util.OptionalInt;
 import java.util.Set;
+import java.util.stream.Stream;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Component;
@@ -29,7 +31,7 @@ public class RecentMessageCounter {
 
     static final Duration RECENT_WINDOW = Duration.ofMinutes(30);
 
-    private final MessageRepository messageRepository;
+    private final RecentMessageMongoStore mongoStore;
     private final RecentMessageRedisStore redisStore;
 
     public int countRecentMessages(String roomId) {
@@ -64,20 +66,11 @@ public class RecentMessageCounter {
             });
 
             if (!missingRoomIds.isEmpty()) {
-                Map<String, List<RecentMessageEntry>> messagesByRoom =
-                        loadRecentMessages(missingRoomIds, window.since());
-                for (String roomId : missingRoomIds) {
-                    int count = redisStore.initialize(
-                            roomId,
-                            messagesByRoom.getOrDefault(roomId, List.of()),
-                            window.cutoffMillis(),
-                            RECENT_WINDOW.toSeconds());
-                    counts.put(roomId, count);
-                }
+                counts.putAll(hydrateMissingRooms(missingRoomIds, window));
             }
             return orderedCounts(uniqueRoomIds, counts);
-        } catch (RuntimeException redisFailure) {
-            log.warn("Redis recent message count failed; falling back to MongoDB", redisFailure);
+        } catch (RuntimeException cacheFailure) {
+            log.warn("Recent message cache failed; falling back to MongoDB aggregation", cacheFailure);
             return mongoCounts(uniqueRoomIds, window.since());
         }
     }
@@ -90,50 +83,79 @@ public class RecentMessageCounter {
 
         Window window = currentWindow();
         try {
+            RecentMessageEntry entry = requireEntry(message);
             OptionalInt currentCount = redisStore.count(message.getRoomId(), window.cutoffMillis());
             if (currentCount.isEmpty()) {
-                List<RecentMessageEntry> recentMessages = messageRepository
-                        .findRecentMessagesByRoomIds(List.of(message.getRoomId()), window.since())
-                        .stream()
-                        .map(this::toEntry)
-                        .toList();
-                redisStore.initialize(
-                        message.getRoomId(),
-                        recentMessages,
-                        window.cutoffMillis(),
-                        RECENT_WINDOW.toSeconds());
+                hydrateMissingRooms(Set.of(message.getRoomId()), window);
             }
             return redisStore.record(
                     message.getRoomId(),
                     message.getId(),
-                    toEpochMillis(message.getTimestamp()),
+                    entry.timestampMillis(),
                     window.cutoffMillis(),
                     RECENT_WINDOW.toSeconds());
         } catch (RuntimeException redisFailure) {
             log.warn("Redis recent message record failed; falling back to MongoDB: roomId={}",
                     message.getRoomId(), redisFailure);
-            return Math.toIntExact(messageRepository.countRecentMessagesByRoomId(
-                    message.getRoomId(), window.since()));
+            return mongoCounts(List.of(message.getRoomId()), window.since())
+                    .getOrDefault(message.getRoomId(), 0);
         }
     }
 
-    private Map<String, List<RecentMessageEntry>> loadRecentMessages(
-            Collection<String> roomIds,
-            LocalDateTime since) {
-        return messageRepository.findRecentMessagesByRoomIds(roomIds, since).stream()
-                .filter(message -> message.getId() != null && message.getRoomId() != null
-                        && message.getTimestamp() != null)
-                .collect(java.util.stream.Collectors.groupingBy(
-                        Message::getRoomId,
-                        LinkedHashMap::new,
-                        java.util.stream.Collectors.mapping(this::toEntry, java.util.stream.Collectors.toList())));
+    private Map<String, Integer> hydrateMissingRooms(Set<String> roomIds, Window window) {
+        Map<String, List<RecentMessageEntry>> batch = new LinkedHashMap<>();
+        int batchSize = 0;
+        boolean appendedBatch = false;
+
+        try (Stream<Message> messages = mongoStore.streamRecentMessages(roomIds, window.since())) {
+            var iterator = messages.iterator();
+            while (iterator.hasNext()) {
+                Message message = iterator.next();
+                Optional<RecentMessageEntry> entry = toEntry(message);
+                if (entry.isEmpty()) {
+                    continue;
+                }
+                batch.computeIfAbsent(message.getRoomId(), ignored -> new java.util.ArrayList<>())
+                        .add(entry.get());
+                batchSize++;
+                if (batchSize == RecentMessageMongoStore.HYDRATION_BATCH_SIZE
+                        && iterator.hasNext()) {
+                    appendBatch(batch, window);
+                    batch.clear();
+                    batchSize = 0;
+                    appendedBatch = true;
+                }
+            }
+        }
+
+        if (!appendedBatch) {
+            Map<String, Collection<RecentMessageEntry>> messagesByRoom = new LinkedHashMap<>();
+            for (String roomId : roomIds) {
+                messagesByRoom.put(roomId, batch.getOrDefault(roomId, List.of()));
+            }
+            return redisStore.initializeAll(
+                    messagesByRoom, window.cutoffMillis(), RECENT_WINDOW.toSeconds());
+        }
+
+        if (!batch.isEmpty()) {
+            appendBatch(batch, window);
+        }
+        return redisStore.completeInitializationAll(
+                roomIds, window.cutoffMillis(), RECENT_WINDOW.toSeconds());
+    }
+
+    private void appendBatch(Map<String, List<RecentMessageEntry>> batch, Window window) {
+        redisStore.appendAll(
+                new LinkedHashMap<>(batch),
+                window.cutoffMillis(),
+                RECENT_WINDOW.toSeconds());
     }
 
     private Map<String, Integer> mongoCounts(Collection<String> roomIds, LocalDateTime since) {
-        Map<String, List<RecentMessageEntry>> messagesByRoom = loadRecentMessages(roomIds, since);
+        Map<String, Integer> aggregatedCounts = mongoStore.countAll(roomIds, since);
         Map<String, Integer> counts = new LinkedHashMap<>();
         for (String roomId : roomIds) {
-            counts.put(roomId, messagesByRoom.getOrDefault(roomId, List.of()).size());
+            counts.put(roomId, aggregatedCounts.getOrDefault(roomId, 0));
         }
         return counts;
     }
@@ -148,8 +170,18 @@ public class RecentMessageCounter {
         return ordered;
     }
 
-    private RecentMessageEntry toEntry(Message message) {
-        return new RecentMessageEntry(message.getId(), toEpochMillis(message.getTimestamp()));
+    private Optional<RecentMessageEntry> toEntry(Message message) {
+        if (message == null || message.getId() == null || message.getRoomId() == null
+                || message.getTimestamp() == null) {
+            return Optional.empty();
+        }
+        return Optional.of(new RecentMessageEntry(
+                message.getId(), toEpochMillis(message.getTimestamp())));
+    }
+
+    private RecentMessageEntry requireEntry(Message message) {
+        return toEntry(message).orElseThrow(() -> new IllegalArgumentException(
+                "Saved message id, roomId and timestamp are required"));
     }
 
     private Window currentWindow() {

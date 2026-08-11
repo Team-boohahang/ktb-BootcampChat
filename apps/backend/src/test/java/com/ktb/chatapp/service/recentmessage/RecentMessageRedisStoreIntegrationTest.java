@@ -43,10 +43,12 @@ class RecentMessageRedisStoreIntegrationTest {
         long now = System.currentTimeMillis();
         long cutoff = now - Duration.ofMinutes(30).toMillis();
 
-        int initialized = store.initialize("room-1", List.of(
+        List<RecentMessageEntry> initialEntries = List.of(
                 new RecentMessageEntry("expired", cutoff - 1),
                 new RecentMessageEntry("boundary", cutoff),
-                new RecentMessageEntry("recent", now - 1_000)), cutoff, 1800);
+                new RecentMessageEntry("recent", now - 1_000));
+        int initialized = store.initializeAll(
+                Map.of("room-1", initialEntries), cutoff, 1800).get("room-1");
         int afterFirstRecord = store.record("room-1", "new", now, cutoff, 1800);
         int afterDuplicate = store.record("room-1", "new", now, cutoff, 1800);
 
@@ -59,9 +61,10 @@ class RecentMessageRedisStoreIntegrationTest {
     @Test
     void countAll_returnsMissingAndInitializedRoomsInOnePipeline() {
         long cutoff = System.currentTimeMillis() - Duration.ofMinutes(30).toMillis();
-        store.initialize("room-1", List.of(), cutoff, 1800);
-        store.initialize("room-2", List.of(
-                new RecentMessageEntry("message-1", System.currentTimeMillis())), cutoff, 1800);
+        store.initializeAll(Map.of(
+                "room-1", List.of(),
+                "room-2", List.of(
+                        new RecentMessageEntry("message-1", System.currentTimeMillis()))), cutoff, 1800);
 
         Map<String, OptionalInt> result = store.countAll(
                 List.of("room-1", "room-2", "room-3"), cutoff);
@@ -69,6 +72,27 @@ class RecentMessageRedisStoreIntegrationTest {
         assertEquals(OptionalInt.of(0), result.get("room-1"));
         assertEquals(OptionalInt.of(1), result.get("room-2"));
         assertEquals(OptionalInt.empty(), result.get("room-3"));
+    }
+
+    @Test
+    void appendAll_hidesPartialHydrationUntilInitializeAllCompletes() {
+        long now = System.currentTimeMillis();
+        long cutoff = now - Duration.ofMinutes(30).toMillis();
+
+        store.appendAll(Map.of(
+                "room-1", List.of(new RecentMessageEntry("message-1", now)),
+                "room-2", List.of(new RecentMessageEntry("message-2", now))), cutoff, 1800);
+
+        Map<String, OptionalInt> partial = store.countAll(List.of("room-1", "room-2"), cutoff);
+        assertEquals(OptionalInt.empty(), partial.get("room-1"));
+        assertEquals(OptionalInt.empty(), partial.get("room-2"));
+
+        Map<String, Integer> initialized =
+                store.completeInitializationAll(List.of("room-1", "room-2"), cutoff, 1800);
+
+        assertEquals(Map.of("room-1", 1, "room-2", 1), initialized);
+        assertEquals(OptionalInt.of(1), store.count("room-1", cutoff));
+        assertEquals(OptionalInt.of(1), store.count("room-2", cutoff));
     }
 
     @Test

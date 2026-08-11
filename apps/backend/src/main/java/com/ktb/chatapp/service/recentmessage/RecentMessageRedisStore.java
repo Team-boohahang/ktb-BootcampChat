@@ -25,10 +25,40 @@ public class RecentMessageRedisStore {
     private static final String INITIALIZED_MEMBER = "__initialized__";
 
     private static final String COUNT_SCRIPT_SOURCE = """
-            if redis.call('EXISTS', KEYS[1]) == 0 then
+            if redis.call('ZSCORE', KEYS[1], ARGV[2]) == false then
                 return -1
             end
             redis.call('ZREMRANGEBYSCORE', KEYS[1], 1, '(' .. ARGV[1])
+            return redis.call('ZCARD', KEYS[1]) - 1
+            """;
+
+    private static final String APPEND_SCRIPT_SOURCE = """
+            local index = 3
+            while index <= #ARGV do
+                redis.call('ZADD', KEYS[1], ARGV[index + 1], ARGV[index])
+                index = index + 2
+            end
+            redis.call('ZREMRANGEBYSCORE', KEYS[1], 1, '(' .. ARGV[1])
+            redis.call('EXPIRE', KEYS[1], ARGV[2])
+            return redis.call('ZCARD', KEYS[1])
+            """;
+
+    private static final String INITIALIZE_SCRIPT_SOURCE = """
+            redis.call('ZADD', KEYS[1], 0, ARGV[1])
+            local index = 4
+            while index <= #ARGV do
+                redis.call('ZADD', KEYS[1], ARGV[index + 1], ARGV[index])
+                index = index + 2
+            end
+            redis.call('ZREMRANGEBYSCORE', KEYS[1], 1, '(' .. ARGV[2])
+            redis.call('EXPIRE', KEYS[1], ARGV[3])
+            return redis.call('ZCARD', KEYS[1]) - 1
+            """;
+
+    private static final String COMPLETE_INITIALIZATION_SCRIPT_SOURCE = """
+            redis.call('ZADD', KEYS[1], 0, ARGV[1])
+            redis.call('ZREMRANGEBYSCORE', KEYS[1], 1, '(' .. ARGV[2])
+            redis.call('EXPIRE', KEYS[1], ARGV[3])
             return redis.call('ZCARD', KEYS[1]) - 1
             """;
 
@@ -43,25 +73,14 @@ public class RecentMessageRedisStore {
             return redis.call('ZCARD', KEYS[1]) - 1
             """, Long.class);
 
-    private static final DefaultRedisScript<Long> INITIALIZE_SCRIPT = new DefaultRedisScript<>("""
-            redis.call('ZADD', KEYS[1], 0, ARGV[1])
-            local index = 4
-            while index <= #ARGV do
-                redis.call('ZADD', KEYS[1], ARGV[index + 1], ARGV[index])
-                index = index + 2
-            end
-            redis.call('ZREMRANGEBYSCORE', KEYS[1], 1, '(' .. ARGV[2])
-            redis.call('EXPIRE', KEYS[1], ARGV[3])
-            return redis.call('ZCARD', KEYS[1]) - 1
-            """, Long.class);
-
     private final StringRedisTemplate redisTemplate;
 
     public OptionalInt count(String roomId, long cutoffMillis) {
         Long result = redisTemplate.execute(
                 COUNT_SCRIPT,
                 List.of(key(roomId)),
-                String.valueOf(cutoffMillis));
+                String.valueOf(cutoffMillis),
+                INITIALIZED_MEMBER);
         return toOptionalCount(result);
     }
 
@@ -72,6 +91,7 @@ public class RecentMessageRedisStore {
         List<String> orderedRoomIds = new ArrayList<>(roomIds);
         byte[] script = COUNT_SCRIPT_SOURCE.getBytes(StandardCharsets.UTF_8);
         byte[] cutoff = String.valueOf(cutoffMillis).getBytes(StandardCharsets.UTF_8);
+        byte[] initializedMember = INITIALIZED_MEMBER.getBytes(StandardCharsets.UTF_8);
 
         List<Object> results = redisTemplate.executePipelined((RedisCallback<Object>) connection -> {
             for (String roomId : orderedRoomIds) {
@@ -81,7 +101,8 @@ public class RecentMessageRedisStore {
                         ReturnType.INTEGER,
                         1,
                         redisKey,
-                        cutoff);
+                        cutoff,
+                        initializedMember);
             }
             return null;
         });
@@ -114,25 +135,117 @@ public class RecentMessageRedisStore {
         return requireCount(result);
     }
 
-    public int initialize(
-            String roomId,
-            Collection<RecentMessageEntry> messages,
+    /**
+     * hydration 중인 메시지를 여러 방에 Redis pipeline 한 번으로 추가한다.
+     * 완료 marker는 마지막 배치 이후에만 추가하므로 부분 집계는 외부에 노출되지 않는다.
+     */
+    public void appendAll(
+            Map<String, ? extends Collection<RecentMessageEntry>> messagesByRoom,
             long cutoffMillis,
             long ttlSeconds) {
-        List<String> arguments = new ArrayList<>(3 + messages.size() * 2);
-        arguments.add(INITIALIZED_MEMBER);
-        arguments.add(String.valueOf(cutoffMillis));
-        arguments.add(String.valueOf(ttlSeconds));
-        for (RecentMessageEntry message : messages) {
-            arguments.add(message.messageId());
-            arguments.add(String.valueOf(message.timestampMillis()));
+        if (messagesByRoom.isEmpty()) {
+            return;
         }
 
-        Long result = redisTemplate.execute(
-                INITIALIZE_SCRIPT,
-                List.of(key(roomId)),
-                arguments.toArray());
-        return requireCount(result);
+        byte[] script = APPEND_SCRIPT_SOURCE.getBytes(StandardCharsets.UTF_8);
+        byte[] cutoff = String.valueOf(cutoffMillis).getBytes(StandardCharsets.UTF_8);
+        byte[] ttl = String.valueOf(ttlSeconds).getBytes(StandardCharsets.UTF_8);
+
+        List<Object> results = redisTemplate.executePipelined((RedisCallback<Object>) connection -> {
+            for (Map.Entry<String, ? extends Collection<RecentMessageEntry>> room
+                    : messagesByRoom.entrySet()) {
+                List<byte[]> arguments = new ArrayList<>(3 + room.getValue().size() * 2);
+                arguments.add(key(room.getKey()).getBytes(StandardCharsets.UTF_8));
+                arguments.add(cutoff);
+                arguments.add(ttl);
+                for (RecentMessageEntry message : room.getValue()) {
+                    arguments.add(message.messageId().getBytes(StandardCharsets.UTF_8));
+                    arguments.add(String.valueOf(message.timestampMillis()).getBytes(StandardCharsets.UTF_8));
+                }
+                connection.scriptingCommands().eval(
+                        script,
+                        ReturnType.INTEGER,
+                        1,
+                        arguments.toArray(byte[][]::new));
+            }
+            return null;
+        });
+
+        requirePipelineSize(results, messagesByRoom.size());
+    }
+
+    public Map<String, Integer> initializeAll(
+            Map<String, ? extends Collection<RecentMessageEntry>> messagesByRoom,
+            long cutoffMillis,
+            long ttlSeconds) {
+        List<String> orderedRoomIds = new ArrayList<>(messagesByRoom.keySet());
+        byte[] script = INITIALIZE_SCRIPT_SOURCE.getBytes(StandardCharsets.UTF_8);
+        byte[] initializedMember = INITIALIZED_MEMBER.getBytes(StandardCharsets.UTF_8);
+        byte[] cutoff = String.valueOf(cutoffMillis).getBytes(StandardCharsets.UTF_8);
+        byte[] ttl = String.valueOf(ttlSeconds).getBytes(StandardCharsets.UTF_8);
+
+        List<Object> results = redisTemplate.executePipelined((RedisCallback<Object>) connection -> {
+            for (String roomId : orderedRoomIds) {
+                Collection<RecentMessageEntry> messages = messagesByRoom.get(roomId);
+                List<byte[]> arguments = new ArrayList<>(4 + messages.size() * 2);
+                arguments.add(key(roomId).getBytes(StandardCharsets.UTF_8));
+                arguments.add(initializedMember);
+                arguments.add(cutoff);
+                arguments.add(ttl);
+                for (RecentMessageEntry message : messages) {
+                    arguments.add(message.messageId().getBytes(StandardCharsets.UTF_8));
+                    arguments.add(String.valueOf(message.timestampMillis()).getBytes(StandardCharsets.UTF_8));
+                }
+                connection.scriptingCommands().eval(
+                        script,
+                        ReturnType.INTEGER,
+                        1,
+                        arguments.toArray(byte[][]::new));
+            }
+            return null;
+        });
+
+        requirePipelineSize(results, orderedRoomIds.size());
+        Map<String, Integer> counts = new LinkedHashMap<>();
+        for (int index = 0; index < orderedRoomIds.size(); index++) {
+            counts.put(orderedRoomIds.get(index), requireCount(asLong(results.get(index))));
+        }
+        return counts;
+    }
+
+    /**
+     * 여러 배치로 나뉜 hydration이 모두 끝난 방을 pipeline 한 번으로 완료 처리한다.
+     */
+    public Map<String, Integer> completeInitializationAll(
+            Collection<String> roomIds,
+            long cutoffMillis,
+            long ttlSeconds) {
+        List<String> orderedRoomIds = new ArrayList<>(roomIds);
+        byte[] script = COMPLETE_INITIALIZATION_SCRIPT_SOURCE.getBytes(StandardCharsets.UTF_8);
+        byte[] initializedMember = INITIALIZED_MEMBER.getBytes(StandardCharsets.UTF_8);
+        byte[] cutoff = String.valueOf(cutoffMillis).getBytes(StandardCharsets.UTF_8);
+        byte[] ttl = String.valueOf(ttlSeconds).getBytes(StandardCharsets.UTF_8);
+
+        List<Object> results = redisTemplate.executePipelined((RedisCallback<Object>) connection -> {
+            for (String roomId : orderedRoomIds) {
+                connection.scriptingCommands().eval(
+                        script,
+                        ReturnType.INTEGER,
+                        1,
+                        key(roomId).getBytes(StandardCharsets.UTF_8),
+                        initializedMember,
+                        cutoff,
+                        ttl);
+            }
+            return null;
+        });
+
+        requirePipelineSize(results, orderedRoomIds.size());
+        Map<String, Integer> counts = new LinkedHashMap<>();
+        for (int index = 0; index < orderedRoomIds.size(); index++) {
+            counts.put(orderedRoomIds.get(index), requireCount(asLong(results.get(index))));
+        }
+        return counts;
     }
 
     private OptionalInt toOptionalCount(Long result) {
@@ -157,6 +270,12 @@ public class RecentMessageRedisStore {
             return number.longValue();
         }
         return Long.parseLong(String.valueOf(value));
+    }
+
+    private void requirePipelineSize(List<Object> results, int expectedSize) {
+        if (results.size() != expectedSize) {
+            throw new IllegalStateException("Redis recent message pipeline returned an invalid result");
+        }
     }
 
     private String key(String roomId) {
