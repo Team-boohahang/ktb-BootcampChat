@@ -49,12 +49,12 @@ class RecentMessageRedisStoreIntegrationTest {
                 new RecentMessageEntry("recent", now - 1_000));
         int initialized = store.initializeAll(
                 Map.of("room-1", initialEntries), cutoff, 1800).get("room-1");
-        int afterFirstRecord = store.record("room-1", "new", now, cutoff, 1800);
-        int afterDuplicate = store.record("room-1", "new", now, cutoff, 1800);
+        OptionalInt afterFirstRecord = store.record("room-1", "new", now, cutoff, 1800);
+        OptionalInt afterDuplicate = store.record("room-1", "new", now, cutoff, 1800);
 
         assertEquals(2, initialized);
-        assertEquals(3, afterFirstRecord);
-        assertEquals(3, afterDuplicate);
+        assertEquals(OptionalInt.of(3), afterFirstRecord);
+        assertEquals(OptionalInt.of(3), afterDuplicate);
         assertEquals(OptionalInt.of(3), store.count("room-1", cutoff));
     }
 
@@ -98,9 +98,26 @@ class RecentMessageRedisStoreIntegrationTest {
     @Test
     void record_setsThirtyMinuteTtl() {
         long now = System.currentTimeMillis();
+        store.initializeAll(Map.of("room-1", List.of()), now - 1_000, 1800);
         store.record("room-1", "message-1", now, now - 1_000, 1800);
 
         Long ttl = redisTemplate.getExpire("recent_messages:room:room-1");
         assertTrue(ttl != null && ttl > 0 && ttl <= 1800);
+    }
+
+    @Test
+    void record_doesNotRecreateInitializedMarkerAfterKeyExpires() {
+        long now = System.currentTimeMillis();
+        long cutoff = now - Duration.ofMinutes(30).toMillis();
+        store.initializeAll(
+                Map.of("room-1", List.of(new RecentMessageEntry("existing", now - 1_000))),
+                cutoff,
+                1800);
+        redisTemplate.delete("recent_messages:room:room-1");
+
+        OptionalInt result = store.record("room-1", "new", now, cutoff, 1800);
+
+        assertEquals(OptionalInt.empty(), result);
+        assertEquals(Boolean.FALSE, redisTemplate.hasKey("recent_messages:room:room-1"));
     }
 }

@@ -84,22 +84,30 @@ public class RecentMessageCounter {
         Window window = currentWindow();
         try {
             RecentMessageEntry entry = requireEntry(message);
-            OptionalInt currentCount = redisStore.count(message.getRoomId(), window.cutoffMillis());
-            if (currentCount.isEmpty()) {
-                hydrateMissingRooms(Set.of(message.getRoomId()), window);
+            OptionalInt recordedCount = record(entry, message.getRoomId(), window);
+            if (recordedCount.isPresent()) {
+                return recordedCount.getAsInt();
             }
-            return redisStore.record(
-                    message.getRoomId(),
-                    message.getId(),
-                    entry.timestampMillis(),
-                    window.cutoffMillis(),
-                    RECENT_WINDOW.toSeconds());
+
+            hydrateMissingRooms(Set.of(message.getRoomId()), window);
+            return record(entry, message.getRoomId(), window)
+                    .orElseGet(() -> mongoCounts(List.of(message.getRoomId()), window.since())
+                            .getOrDefault(message.getRoomId(), 0));
         } catch (RuntimeException redisFailure) {
             log.warn("Redis recent message record failed; falling back to MongoDB: roomId={}",
                     message.getRoomId(), redisFailure);
             return mongoCounts(List.of(message.getRoomId()), window.since())
                     .getOrDefault(message.getRoomId(), 0);
         }
+    }
+
+    private OptionalInt record(RecentMessageEntry entry, String roomId, Window window) {
+        return redisStore.record(
+                roomId,
+                entry.messageId(),
+                entry.timestampMillis(),
+                window.cutoffMillis(),
+                RECENT_WINDOW.toSeconds());
     }
 
     private Map<String, Integer> hydrateMissingRooms(Set<String> roomIds, Window window) {

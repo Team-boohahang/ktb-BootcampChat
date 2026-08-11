@@ -122,9 +122,8 @@ class RecentMessageCounterTest {
     @Test
     void recordMessage_updatesRedisWithoutMongoWhenRoomIsInitialized() {
         Message message = message("message-1", MessageType.text);
-        when(redisStore.count(eq("room-1"), anyLong())).thenReturn(OptionalInt.of(2));
         when(redisStore.record(eq("room-1"), eq("message-1"), anyLong(), anyLong(), eq(1800L)))
-                .thenReturn(3);
+                .thenReturn(OptionalInt.of(3));
 
         assertEquals(3, counter.recordMessage(message));
 
@@ -139,13 +138,12 @@ class RecentMessageCounterTest {
                 .roomId("room-1")
                 .timestamp(null)
                 .build();
-        when(redisStore.count(eq("room-1"), anyLong())).thenReturn(OptionalInt.empty());
         when(mongoStore.streamRecentMessages(any(), any()))
                 .thenReturn(new ArrayList<>(List.of(saved, invalid)).stream());
         when(redisStore.initializeAll(any(), anyLong(), eq(1800L)))
                 .thenReturn(Map.of("room-1", 1));
         when(redisStore.record(eq("room-1"), eq("message-1"), anyLong(), anyLong(), eq(1800L)))
-                .thenReturn(1);
+                .thenReturn(OptionalInt.empty(), OptionalInt.of(1));
 
         assertEquals(1, counter.recordMessage(saved));
 
@@ -161,10 +159,28 @@ class RecentMessageCounterTest {
     @Test
     void recordMessage_redisFailureUsesExactMongoAggregationCount() {
         Message message = message("message-1", MessageType.text);
-        when(redisStore.count(eq("room-1"), anyLong())).thenThrow(new RuntimeException("redis down"));
+        when(redisStore.record(eq("room-1"), eq("message-1"), anyLong(), anyLong(), eq(1800L)))
+                .thenThrow(new RuntimeException("redis down"));
         when(mongoStore.countAll(any(), any())).thenReturn(Map.of("room-1", 9));
 
         assertEquals(9, counter.recordMessage(message));
+        verify(mongoStore).countAll(eq(List.of("room-1")), any(LocalDateTime.class));
+    }
+
+    @Test
+    void recordMessage_secondCacheMissUsesExactMongoAggregationCount() {
+        Message message = message("message-1", MessageType.text);
+        when(redisStore.record(eq("room-1"), eq("message-1"), anyLong(), anyLong(), eq(1800L)))
+                .thenReturn(OptionalInt.empty(), OptionalInt.empty());
+        when(mongoStore.streamRecentMessages(any(), any())).thenReturn(List.of(message).stream());
+        when(redisStore.initializeAll(any(), anyLong(), eq(1800L)))
+                .thenReturn(Map.of("room-1", 1));
+        when(mongoStore.countAll(any(), any())).thenReturn(Map.of("room-1", 1));
+
+        assertEquals(1, counter.recordMessage(message));
+
+        verify(redisStore, times(2))
+                .record(eq("room-1"), eq("message-1"), anyLong(), anyLong(), eq(1800L));
         verify(mongoStore).countAll(eq(List.of("room-1")), any(LocalDateTime.class));
     }
 

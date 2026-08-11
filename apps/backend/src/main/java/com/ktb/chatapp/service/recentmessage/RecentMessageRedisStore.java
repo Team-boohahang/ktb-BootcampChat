@@ -66,7 +66,9 @@ public class RecentMessageRedisStore {
             new DefaultRedisScript<>(COUNT_SCRIPT_SOURCE, Long.class);
 
     private static final DefaultRedisScript<Long> RECORD_SCRIPT = new DefaultRedisScript<>("""
-            redis.call('ZADD', KEYS[1], 0, ARGV[1])
+            if redis.call('ZSCORE', KEYS[1], ARGV[1]) == false then
+                return -1
+            end
             redis.call('ZADD', KEYS[1], ARGV[3], ARGV[2])
             redis.call('ZREMRANGEBYSCORE', KEYS[1], 1, '(' .. ARGV[4])
             redis.call('EXPIRE', KEYS[1], ARGV[5])
@@ -118,7 +120,7 @@ public class RecentMessageRedisStore {
         return counts;
     }
 
-    public int record(
+    public OptionalInt record(
             String roomId,
             String messageId,
             long timestampMillis,
@@ -132,7 +134,7 @@ public class RecentMessageRedisStore {
                 String.valueOf(timestampMillis),
                 String.valueOf(cutoffMillis),
                 String.valueOf(ttlSeconds));
-        return requireCount(result);
+        return toOptionalCount(result);
     }
 
     /**
