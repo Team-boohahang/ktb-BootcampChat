@@ -1,6 +1,6 @@
 import { render, screen } from '@testing-library/react';
 import { describe, expect, it, vi } from 'vitest';
-import { Login } from '../index';
+import { Login } from '../../pages/index';
 import authService from '@/services/authService';
 
 vi.mock('next/router', () => ({
