@@ -8,7 +8,9 @@ import com.ktb.chatapp.dto.MessageReactionResponse;
 import com.ktb.chatapp.model.Message;
 import com.ktb.chatapp.repository.MessageRepository;
 import com.ktb.chatapp.websocket.socketio.SocketUser;
+import java.util.ArrayList;
 import java.util.HashMap;
+import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
@@ -47,16 +49,22 @@ public class MessageReactionHandler {
     private final MessageRepository messageRepository;
     private final MongoTemplate mongoTemplate;
     private final ScheduledExecutorService reactionBroadcastScheduler;
-    private final Map<String, PendingReactionUpdate> pendingReactionUpdates = new ConcurrentHashMap<>();
+    private final Map<String, PendingReactionBatch> pendingReactionBatches = new ConcurrentHashMap<>();
     private final AtomicLong reactionChangesApplied = new AtomicLong();
     private final AtomicLong reactionBroadcastEmits = new AtomicLong();
+    private final AtomicLong reactionRecipients = new AtomicLong();
+    private final AtomicLong reactionBatchMessages = new AtomicLong();
     private final AtomicLong coalescedReactionUpdates = new AtomicLong();
+    private final AtomicLong reactionBatchSizeMax = new AtomicLong();
 
     @Value("${PERF_CHAT_MESSAGE_SLOW_THRESHOLD_MS:${perf.chat-message.slow-threshold-ms:100}}")
     private long perfSlowThresholdMs = 100;
 
     @Value("${REACTION_BROADCAST_COALESCE_MS:${reaction.broadcast.coalesce-ms:100}}")
     private long reactionBroadcastCoalesceMs = 100;
+
+    @Value("${REACTION_BROADCAST_BATCH_SIZE:${reaction.broadcast.batch-size:100}}")
+    private int reactionBroadcastBatchSize = 100;
 
     @Autowired
     public MessageReactionHandler(
@@ -161,51 +169,56 @@ public class MessageReactionHandler {
     }
 
     private void enqueueReactionUpdate(String messageId, String roomId, Map<String, Set<String>> reactions) {
-        pendingReactionUpdates.compute(messageId, (key, existing) -> {
+        pendingReactionBatches.compute(roomId, (key, existing) -> {
             if (existing == null) {
-                PendingReactionUpdate update = new PendingReactionUpdate(roomId, reactions);
-                update.reschedule(scheduleReactionFlush(messageId, update.version()));
-                return update;
+                PendingReactionBatch batch = new PendingReactionBatch();
+                batch.update(messageId, reactions);
+                batch.reschedule(scheduleReactionFlush(roomId, batch.version(), batch.delayMs(reactionBroadcastCoalesceMs, reactionBroadcastBatchSize)));
+                return batch;
             }
 
-            existing.update(roomId, reactions);
-            existing.reschedule(scheduleReactionFlush(messageId, existing.version()));
+            existing.update(messageId, reactions);
+            existing.reschedule(scheduleReactionFlush(roomId, existing.version(), existing.delayMs(reactionBroadcastCoalesceMs, reactionBroadcastBatchSize)));
             return existing;
         });
     }
 
-    private ScheduledFuture<?> scheduleReactionFlush(String messageId, long version) {
+    private ScheduledFuture<?> scheduleReactionFlush(String roomId, long version, long delayMs) {
         return reactionBroadcastScheduler.schedule(
-                () -> flushReactionUpdate(messageId, version),
-                reactionBroadcastCoalesceMs,
+                () -> flushReactionBatch(roomId, version),
+                delayMs,
                 TimeUnit.MILLISECONDS);
     }
 
-    private void flushReactionUpdate(String messageId, long expectedVersion) {
-        AtomicReference<PendingReactionUpdate> updateToFlush = new AtomicReference<>();
-        pendingReactionUpdates.computeIfPresent(messageId, (key, update) -> {
-            if (update.version() != expectedVersion) {
-                return update;
+    private void flushReactionBatch(String roomId, long expectedVersion) {
+        AtomicReference<PendingReactionBatch> batchToFlush = new AtomicReference<>();
+        pendingReactionBatches.computeIfPresent(roomId, (key, batch) -> {
+            if (batch.version() != expectedVersion) {
+                return batch;
             }
-            updateToFlush.set(update);
+            batchToFlush.set(batch);
             return null;
         });
 
-        PendingReactionUpdate update = updateToFlush.get();
-        if (update == null) {
+        PendingReactionBatch batch = batchToFlush.get();
+        if (batch == null) {
             return;
         }
 
         long startedAt = System.nanoTime();
-        MessageReactionResponse response = new MessageReactionResponse(messageId, update.reactions());
-        socketIOServer.getRoomOperations(update.roomId())
-                .sendEvent(MESSAGE_REACTION_UPDATE, response);
+        List<MessageReactionResponse> responses = batch.responses();
+        var roomOperations = socketIOServer.getRoomOperations(roomId);
+        int recipients = roomOperations.getClients().size();
+        roomOperations.sendEvent(MESSAGE_REACTION_UPDATES, responses);
         reactionBroadcastEmits.incrementAndGet();
-        coalescedReactionUpdates.addAndGet(Math.max(0, update.changeCount() - 1));
+        reactionRecipients.addAndGet(recipients);
+        reactionBatchMessages.addAndGet(responses.size());
+        updateMax(reactionBatchSizeMax, responses.size());
+        coalescedReactionUpdates.addAndGet(Math.max(0, batch.changeCount() - responses.size()));
         long broadcastMs = elapsedMillis(startedAt);
         if (broadcastMs >= perfSlowThresholdMs) {
-            log.info("[PERF][reaction] status={} totalMs={} userContextMs={} sessionMs={} rateLimitMs={} validationMs={} messageQueryMs={} reactionUpdateMs={} reactionMutationMs={} messageSaveMs={} broadcastMs={} changed={} roomId={} messageId={}",
-                    "broadcast_flush", broadcastMs, 0, 0, 0, 0, 0, 0, 0, 0, broadcastMs, true, update.roomId(), messageId);
+            log.info("[PERF][reaction] status={} totalMs={} userContextMs={} sessionMs={} rateLimitMs={} validationMs={} messageQueryMs={} reactionUpdateMs={} reactionMutationMs={} messageSaveMs={} broadcastMs={} changed={} roomId={} batchSize={} recipients={}",
+                    "broadcast_flush", broadcastMs, 0, 0, 0, 0, 0, 0, 0, 0, broadcastMs, true, roomId, responses.size(), recipients);
         }
     }
 
@@ -238,14 +251,30 @@ public class MessageReactionHandler {
 
     @PreDestroy
     void shutdownReactionBroadcastScheduler() {
+        flushPendingReactionBatches();
         logReactionMetrics();
         reactionBroadcastScheduler.shutdownNow();
     }
 
     private void logReactionMetrics() {
-        log.info("[METRIC][reaction] reactionChangesApplied={} reactionBroadcastEmits={} coalescedReactionUpdates={} pendingReactionUpdates={}",
-                reactionChangesApplied.get(), reactionBroadcastEmits.get(),
-                coalescedReactionUpdates.get(), pendingReactionUpdates.size());
+        long emits = reactionBroadcastEmits.get();
+        long batchMessages = reactionBatchMessages.get();
+        long batchSizeAvg = emits > 0 ? batchMessages / emits : 0;
+        long recipientAvg = emits > 0 ? reactionRecipients.get() / emits : 0;
+        log.info("[METRIC][reaction] reactionChangesApplied={} reactionBroadcastEmits={} reactionRecipients={} reactionRecipientsAvg={} reactionBatchMessages={} reactionBatchSizeAvg={} reactionBatchSizeMax={} coalescedReactionUpdates={} pendingReactionBatches={}",
+                reactionChangesApplied.get(), emits, reactionRecipients.get(), recipientAvg,
+                batchMessages, batchSizeAvg, reactionBatchSizeMax.get(),
+                coalescedReactionUpdates.get(), pendingReactionBatches.size());
+    }
+
+    private void flushPendingReactionBatches() {
+        List<String> roomIds = new ArrayList<>(pendingReactionBatches.keySet());
+        for (String roomId : roomIds) {
+            PendingReactionBatch batch = pendingReactionBatches.get(roomId);
+            if (batch != null) {
+                flushReactionBatch(roomId, batch.version());
+            }
+        }
     }
 
     private static ScheduledExecutorService createReactionBroadcastScheduler() {
@@ -270,6 +299,10 @@ public class MessageReactionHandler {
         return reactionBroadcastEmits.get();
     }
 
+    long reactionBatchMessages() {
+        return reactionBatchMessages.get();
+    }
+
     long coalescedReactionUpdates() {
         return coalescedReactionUpdates.get();
     }
@@ -277,23 +310,20 @@ public class MessageReactionHandler {
     private record ReactionUpdateCommand(Query query, Update update) {
     }
 
-    private static final class PendingReactionUpdate {
-        private volatile String roomId;
-        private volatile Map<String, Set<String>> reactions;
+    private static final class PendingReactionBatch {
+        private final Map<String, MessageReactionResponse> updatesByMessageId = new HashMap<>();
         private volatile ScheduledFuture<?> scheduledFuture;
         private long version = 1;
-        private long changeCount = 1;
+        private long changeCount;
 
-        private PendingReactionUpdate(String roomId, Map<String, Set<String>> reactions) {
-            this.roomId = roomId;
-            this.reactions = reactions;
-        }
-
-        private void update(String roomId, Map<String, Set<String>> reactions) {
-            this.roomId = roomId;
-            this.reactions = reactions;
+        private void update(String messageId, Map<String, Set<String>> reactions) {
+            updatesByMessageId.put(messageId, new MessageReactionResponse(messageId, reactions));
             this.version++;
             this.changeCount++;
+        }
+
+        private long delayMs(long coalesceMs, int maxBatchSize) {
+            return updatesByMessageId.size() >= maxBatchSize ? 0 : coalesceMs;
         }
 
         private void reschedule(ScheduledFuture<?> scheduledFuture) {
@@ -304,12 +334,8 @@ public class MessageReactionHandler {
             }
         }
 
-        private String roomId() {
-            return roomId;
-        }
-
-        private Map<String, Set<String>> reactions() {
-            return reactions;
+        private List<MessageReactionResponse> responses() {
+            return List.copyOf(updatesByMessageId.values());
         }
 
         private long version() {
@@ -319,5 +345,15 @@ public class MessageReactionHandler {
         private long changeCount() {
             return changeCount;
         }
+    }
+
+    private static void updateMax(AtomicLong max, long candidate) {
+        long current;
+        do {
+            current = max.get();
+            if (candidate <= current) {
+                return;
+            }
+        } while (!max.compareAndSet(current, candidate));
     }
 }

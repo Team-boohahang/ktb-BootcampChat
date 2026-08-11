@@ -92,6 +92,7 @@ class LoadTester {
       previousMessagesFetched: 0,
       reactionsSent: 0,
       reactionUpdatesReceived: 0,
+      reactionBatchMessagesReceived: 0,
       sessionEndedReceived: 0,
       participantsUpdatesReceived: 0,
       errorsAuth: 0,
@@ -316,6 +317,12 @@ class LoadTester {
 
         socket.on(SERVER_EMIT.MESSAGE_REACTION_UPDATE, (data) => {
           this.metrics.reactionUpdatesReceived++;
+          this.metrics.reactionBatchMessagesReceived++;
+        });
+
+        socket.on(SERVER_EMIT.MESSAGE_REACTION_UPDATES, (data) => {
+          this.metrics.reactionUpdatesReceived++;
+          this.metrics.reactionBatchMessagesReceived += Array.isArray(data) ? data.length : 0;
         });
 
         socket.on(SERVER_EMIT.SESSION_ENDED, (data) => {
@@ -509,6 +516,7 @@ class LoadTester {
       [chalk.cyan('Prev Msgs Fetched'), this.metrics.previousMessagesFetched],
       [chalk.cyan('Reactions Sent'), this.metrics.reactionsSent],
       [chalk.cyan('Reaction Updates Received'), this.metrics.reactionUpdatesReceived],
+      [chalk.cyan('Reaction Batch Messages Received'), this.metrics.reactionBatchMessagesReceived],
       [chalk.cyan('Unique Reaction Target Messages'), uniqueReactionTargetMessages],
       [chalk.cyan('Max Reactions Per Message'), maxReactionsPerMessage],
       [chalk.cyan('Avg Reactions Per Target'), avgReactionsPerTargetMessage],

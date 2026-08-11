@@ -373,6 +373,7 @@ describe('socketClient', () => {
       onMessage: vi.fn(),
       onPreviousMessagesLoaded: vi.fn(),
       onMessageReactionUpdate: vi.fn(),
+      onMessageReactionUpdates: vi.fn(),
       onSessionEnded: vi.fn(),
       onError: vi.fn(),
     };
@@ -384,6 +385,7 @@ describe('socketClient', () => {
     socket.emitToClient('message', { _id: 'message-1' });
     socket.emitToClient('previousMessagesLoaded', { messages: [], hasMore: false });
     socket.emitToClient('messageReactionUpdate', { messageId: 'message-1' });
+    socket.emitToClient('messageReactionUpdates', [{ messageId: 'message-2' }]);
     socket.emitToClient('session_ended');
     socket.emitToClient('error', { code: 'MESSAGE_REJECTED' });
 
@@ -392,6 +394,7 @@ describe('socketClient', () => {
     expect(handlers.onMessage).toHaveBeenCalledWith({ _id: 'message-1' });
     expect(handlers.onPreviousMessagesLoaded).toHaveBeenCalledWith({ messages: [], hasMore: false });
     expect(handlers.onMessageReactionUpdate).toHaveBeenCalledWith({ messageId: 'message-1' });
+    expect(handlers.onMessageReactionUpdates).toHaveBeenCalledWith([{ messageId: 'message-2' }]);
     expect(handlers.onSessionEnded).toHaveBeenCalledTimes(1);
     expect(handlers.onError).toHaveBeenCalledWith({ code: 'MESSAGE_REJECTED' });
 
@@ -402,6 +405,7 @@ describe('socketClient', () => {
     expect(socket.listenerCount('message')).toBe(0);
     expect(socket.listenerCount('previousMessagesLoaded')).toBe(0);
     expect(socket.listenerCount('messageReactionUpdate')).toBe(0);
+    expect(socket.listenerCount('messageReactionUpdates')).toBe(0);
     expect(socket.listenerCount('session_ended')).toBe(0);
     expect(socket.listenerCount('error')).toBe(0);
   });

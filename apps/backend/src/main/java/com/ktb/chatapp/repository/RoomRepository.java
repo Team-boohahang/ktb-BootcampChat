@@ -6,10 +6,15 @@ import org.springframework.data.mongodb.repository.Query;
 import org.springframework.data.mongodb.repository.Update;
 import org.springframework.stereotype.Repository;
 
+import java.util.List;
 import java.util.Optional;
 
 @Repository
 public interface RoomRepository extends MongoRepository<Room, String> {
+
+    // 방 목록은 최신순으로 조회하고 응답 구성에 사용하지 않는 비밀번호는 전송하지 않는다.
+    @Query(value = "{}", fields = "{ 'password': 0 }", sort = "{ 'createdAt': -1 }")
+    List<Room> findAllForRoomList();
 
     // 가장 최근에 생성된 방 조회 (Health Check용)
     @Query(value = "{}", sort = "{ 'createdAt': -1 }")
