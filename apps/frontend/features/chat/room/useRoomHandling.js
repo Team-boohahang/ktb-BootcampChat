@@ -369,8 +369,6 @@ export const useRoomHandling = ({
         }
 
         attachSocket(socketResult.value);
-
-        attachSocket(socketResult.value);
         const roomData = roomDataResult.value;
 
         // Ensure current user is included in participants for display

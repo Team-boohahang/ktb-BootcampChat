@@ -30,6 +30,7 @@ const renderRoomsSocket = (socket, overrides = {}) => {
 
 const createSocket = () => ({
   on: vi.fn(),
+  off: vi.fn(),
   emit: vi.fn(),
   disconnect: vi.fn(),
 });
@@ -116,5 +117,22 @@ describe('useRoomsSocket', () => {
     handlerFor(socket, 'roomActivity')(undefined);
 
     expect(setRooms).not.toHaveBeenCalled();
+  });
+
+  it('removes list listeners without disconnecting the shared socket on unmount', async () => {
+    const socket = createSocket();
+    const { unmount } = renderRoomsSocket(socket);
+
+    await waitFor(() => {
+      expect(socket.on).toHaveBeenCalledWith('connect', expect.any(Function));
+    });
+
+    const subscriptions = [...socket.on.mock.calls];
+    unmount();
+
+    for (const [event, handler] of subscriptions) {
+      expect(socket.off).toHaveBeenCalledWith(event, handler);
+    }
+    expect(socket.disconnect).not.toHaveBeenCalled();
   });
 });
