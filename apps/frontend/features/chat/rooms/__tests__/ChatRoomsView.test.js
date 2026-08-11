@@ -85,6 +85,22 @@ describe('ChatRoomsView', () => {
     expect(mocks.fetchRooms).toHaveBeenCalledTimes(1);
   });
 
+  it('starts the connection check without blocking the initial room request', async () => {
+    let resolveConnection;
+    mocks.attemptConnection.mockReturnValueOnce(new Promise((resolve) => {
+      resolveConnection = resolve;
+    }));
+
+    render(<ChatRoomsView router={{ push: vi.fn() }} />);
+
+    await waitFor(() => {
+      expect(mocks.attemptConnection).toHaveBeenCalledTimes(1);
+      expect(mocks.fetchRooms).toHaveBeenCalledTimes(1);
+    });
+
+    resolveConnection(true);
+  });
+
   it('refreshes the room list on an interval while connected', async () => {
     mocks.connectionStatus = CONNECTION_STATUS.CONNECTED;
     vi.useFakeTimers();
@@ -138,12 +154,15 @@ describe('ChatRoomsView', () => {
 
     render(<ChatRoomsView router={{ push: vi.fn() }} />);
 
-    await waitFor(() => {
-      expect(screen.getByText('재연결')).toBeTruthy();
-    });
+    const reconnectButton = await screen.findByText('재연결');
 
     expect(screen.queryByTestId('refresh-rooms-button')).toBeNull();
     expect(screen.queryByTestId('rooms-error-overlay')).toBeNull();
+
+    fireEvent.click(reconnectButton);
+
+    expect(mocks.attemptConnection).toHaveBeenCalledTimes(1);
+    expect(mocks.fetchRooms).toHaveBeenCalledTimes(2);
   });
 
   it('shows non-fatal refresh errors as an overlay inside the stable list slot', () => {

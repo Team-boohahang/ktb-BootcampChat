@@ -4,23 +4,10 @@ import { useEffect } from 'react';
 import { usePathname, useRouter } from 'next/navigation';
 import ChatHeader from '@/components/ChatHeader';
 import { useAuth } from '@/contexts/AuthContext';
-import ChatRoomView from '@/features/chat/room/ChatRoomView';
+import ChatRoomView, {
+  ChatRoomLoadingShell,
+} from '@/features/chat/room/ChatRoomView';
 import { useRoomId } from '@/hooks/useRoomId';
-
-const LoadingState = () => (
-  <div
-    style={{
-      display: 'flex',
-      alignItems: 'center',
-      justifyContent: 'center',
-      height: '100vh',
-      backgroundColor: 'var(--vapor-color-background)',
-      color: 'var(--vapor-color-text-primary)',
-    }}
-  >
-    <div>Loading...</div>
-  </div>
-);
 
 export default function ChatRoomPage() {
   const router = useRouter();
@@ -34,8 +21,17 @@ export default function ChatRoomPage() {
     }
   }, [isAuthenticated, isLoading, pathname, router]);
 
-  if (isLoading || !isAuthenticated) {
-    return <LoadingState />;
+  if (!isLoading && !isAuthenticated) {
+    return null;
+  }
+
+  if (isLoading) {
+    return (
+      <>
+        <ChatHeader />
+        <ChatRoomLoadingShell />
+      </>
+    );
   }
 
   return (

@@ -1,4 +1,4 @@
-import React, { useEffect, useRef } from 'react';
+import React, { useCallback, useEffect, useRef } from 'react';
 import { ErrorCircleIcon, NetworkIcon, RefreshOutlineIcon } from '@vapor-ui/icons';
 import { Button, Text, Badge, Callout, Box, VStack, HStack, Spinner } from '@vapor-ui/core';
 import { useAuth } from '@/contexts/AuthContext';
@@ -55,11 +55,10 @@ export default function ChatRoomsView({ router }) {
     connectionStatus,
     setConnectionStatus,
     isRetrying,
-    attemptConnection,
   });
 
-  const connectionCheckTimerRef = useRef(null);
   const initialFetchStartedRef = useRef(false);
+  const initialConnectionCheckStartedRef = useRef(false);
   const refreshRoomsRef = useRef(refreshRooms);
 
   useEffect(() => {
@@ -102,18 +101,31 @@ export default function ChatRoomsView({ router }) {
   }, [currentUserKey, fetchRooms]);
 
   useEffect(() => {
-    if (!currentUserKey || connectionStatus !== CONNECTION_STATUS.CHECKING) return;
+    if (!currentUserKey) {
+      initialConnectionCheckStartedRef.current = false;
+      return;
+    }
 
-    connectionCheckTimerRef.current = setInterval(() => {
-      attemptConnection();
-    }, 5000);
+    if (
+      connectionStatus !== CONNECTION_STATUS.CHECKING ||
+      initialConnectionCheckStartedRef.current
+    ) {
+      return;
+    }
 
-    return () => {
-      if (connectionCheckTimerRef.current) {
-        clearInterval(connectionCheckTimerRef.current);
-      }
-    };
+    initialConnectionCheckStartedRef.current = true;
+    // 연결 진단은 방 목록 요청과 독립적으로 시작한다. 진단 응답이 느리거나 실패해도
+    // 사용자가 볼 목록 데이터의 요청을 막지 않는다.
+    attemptConnection().catch(() => {});
   }, [currentUserKey, connectionStatus, attemptConnection]);
+
+  const handleReconnect = useCallback(async () => {
+    initialConnectionCheckStartedRef.current = true;
+    await Promise.allSettled([
+      attemptConnection(),
+      fetchRooms(),
+    ]);
+  }, [attemptConnection, fetchRooms]);
 
   // 활성도 지표는 소켓 이벤트만으로 만료를 알 수 없어 주기적으로 다시 조회한다.
   // 보이지 않는 탭에서는 갱신을 멈추고, 다시 보일 때 즉시 한 번 따라잡는다.
@@ -170,7 +182,7 @@ export default function ChatRoomsView({ router }) {
                 <Button
                   variant="outline"
                   size="sm"
-                  onClick={() => fetchRooms()}
+                  onClick={handleReconnect}
                   disabled={isRetrying}
                 >
                   <RefreshOutlineIcon size={16} />
@@ -229,9 +241,9 @@ export default function ChatRoomsView({ router }) {
                     <Text typography="body2">{error.message}</Text>
                     {error.showRetry && !isRetrying && (
                       <Button
-                        variant="outline"
-                        size="sm"
-                        onClick={() => fetchRooms()}
+                    variant="outline"
+                    size="sm"
+                    onClick={handleReconnect}
                       >
                         다시 시도
                       </Button>

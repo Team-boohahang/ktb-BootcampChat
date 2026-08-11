@@ -4,7 +4,6 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 vi.mock('next/navigation', () => ({
   useRouter: () => ({ push: vi.fn() }),
-  useSearchParams: () => new URLSearchParams('redirect=%2Fchat'),
 }));
 
 vi.mock('@/contexts/AuthContext', () => ({
@@ -23,7 +22,10 @@ describe('LoginRoutePage', () => {
   });
 
   it('문서 이동 없이 루트 URL에서 로그인 폼을 유지한다', async () => {
-    render(React.createElement(LoginRoutePage));
+    const page = await LoginRoutePage({
+      searchParams: Promise.resolve({ redirect: '/chat' }),
+    });
+    render(page);
 
     expect(screen.getByTestId('login-email-input')).toBeEnabled();
     expect(screen.getByTestId('login-password-input')).toBeEnabled();

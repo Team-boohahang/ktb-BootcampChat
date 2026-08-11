@@ -21,7 +21,7 @@ const RoomsTable = ({ rooms, connectionStatus, onJoinRoom }) => {
         WebkitOverflowScrolling: 'touch',
       }}
     >
-      <Table.Root style={{ width: '100%' }}>
+      <Table.Root style={{ width: '100%', tableLayout: 'fixed' }}>
         <Table.ColumnGroup>
           <Table.Column style={{ width: '40%' }} />
           <Table.Column style={{ width: '12%' }} />
@@ -44,8 +44,23 @@ const RoomsTable = ({ rooms, connectionStatus, onJoinRoom }) => {
           {rooms.map((room) => (
             <Table.Row key={room._id}>
               <Table.Cell>
-                <VStack $css={{ gap: '$050', alignItems: 'flex-start' }}>
-                  <Text style={{ fontWeight: 500 }}>{room.name}</Text>
+                <VStack
+                  $css={{ gap: '$050', alignItems: 'flex-start' }}
+                  style={{ width: '100%', minWidth: 0 }}
+                >
+                  <Text
+                    title={room.name}
+                    style={{
+                      display: 'block',
+                      width: '100%',
+                      overflow: 'hidden',
+                      textOverflow: 'ellipsis',
+                      whiteSpace: 'nowrap',
+                      fontWeight: 500,
+                    }}
+                  >
+                    {room.name}
+                  </Text>
                   {room.hasPassword && (
                     <HStack $css={{ gap: '$050', alignItems: 'center', color: '$warning-100' }}>
                       <LockIcon size={16} />

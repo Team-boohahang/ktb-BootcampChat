@@ -35,6 +35,27 @@ const ChatRoomShell = ({ children }) => (
   </VStack>
 );
 
+export const ChatRoomLoadingShell = () => (
+  <ChatRoomShell>
+    <Flex
+      className="flex-1 min-h-0"
+      style={{ textAlign: 'center' }}
+      $css={{
+        gap: '$100',
+        alignItems: 'center',
+        justifyContent: 'center',
+      }}
+    >
+      <Spinner
+        size="lg"
+        colorPalette="primary"
+        aria-label="채팅방 연결 중"
+      />
+      <Text typography="heading5">채팅방 연결 중...</Text>
+    </Flex>
+  </ChatRoomShell>
+);
+
 const ChatRoomView = ({ roomId, onNavigate, onReplace, asPath }) => {
   const {
     room,
@@ -54,27 +75,6 @@ const ChatRoomView = ({ roomId, onNavigate, onReplace, asPath }) => {
     hasMoreMessages,
     handleLoadMore,
   } = useChatRoom({ roomId, onNavigate, onReplace, asPath });
-
-  const renderLoadingState = () => (
-    <ChatRoomShell>
-      <Flex
-        className="flex-1 min-h-0"
-        style={{ textAlign: 'center' }}
-        $css={{
-          gap: '$100',
-          alignItems: 'center',
-          justifyContent: 'center',
-        }}
-      >
-        <Spinner
-          size="lg"
-          colorPalette="primary"
-          aria-label="채팅방 연결 중"
-        />
-        <Text typography="heading5">채팅방 연결 중...</Text>
-      </Flex>
-    </ChatRoomShell>
-  );
 
   const renderErrorState = () => (
     <ChatRoomShell>
@@ -99,7 +99,7 @@ const ChatRoomView = ({ roomId, onNavigate, onReplace, asPath }) => {
   }
 
   if (loading || !room) {
-    return renderLoadingState();
+    return <ChatRoomLoadingShell />;
   }
 
   return (

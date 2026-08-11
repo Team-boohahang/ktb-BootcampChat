@@ -7,7 +7,6 @@ import {
   useContext,
 } from 'react';
 import { useRouter } from 'next/router';
-import socketService from '../services/socket';
 import authService from '../services/authService';
 import api, { getAuthHeaders } from '../lib/api/client';
 import {
@@ -32,6 +31,15 @@ export const useAuth = () => {
 };
 
 const TOKEN_VERIFICATION_INTERVAL = 5 * 60 * 1000; // 5 minutes
+
+const disconnectSocket = () => {
+  // 로그인·회원가입 경로의 초기 번들에 socket.io-client를 포함하지 않는다.
+  // 실제 채팅 화면은 socketClient를 직접 로드하며, 인증 만료와 로그아웃 때만
+  // 이 청크를 지연 로드해 남아 있는 연결을 정리한다.
+  void import('../services/socket')
+    .then(({ default: socketService }) => socketService.disconnect())
+    .catch(() => {});
+};
 
 /**
  * AuthProvider: 전역 인증 상태 관리
@@ -87,7 +95,7 @@ export const AuthProviderWithRouter = ({ children, router }) => {
         if (!currentUser) {
           // 세션 만료됨
           setUser(null);
-          socketService.disconnect();
+          disconnectSocket();
           router.replace('/');
         }
       },
@@ -123,7 +131,7 @@ export const AuthProviderWithRouter = ({ children, router }) => {
     // 서버 응답이 느려도 로컬 로그아웃과 화면 이동을 지연시키지 않는다.
     void authService.logout(user?.token, user?.sessionId);
 
-    socketService.disconnect();
+    disconnectSocket();
     saveUser(null);
 
     try {
@@ -358,8 +366,11 @@ export const withoutAuth = (WrappedComponent) => {
       }
     }, [isAuthenticated, isLoading, router, router.isReady]);
 
-    // 로딩 중이거나 이미 로그인된 사용자인 경우 로딩 화면
-    if (isLoading || isAuthenticated) {
+    // 인증 정보는 localStorage에서 복원되므로 서버 렌더링 시점에는 확인할 수 없다.
+    // 복원이 끝날 때까지 폼을 숨기면 로그인 화면의 초기 HTML이 Loading으로 대체되어
+    // LCP가 hydration 이후로 밀린다. 폼을 먼저 그리고, 저장된 세션이 확인된 경우에만
+    // 리다이렉트가 끝날 때까지 로딩 화면을 표시한다.
+    if (isAuthenticated) {
       return (
         <div
           style={{
