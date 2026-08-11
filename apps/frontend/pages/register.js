@@ -62,7 +62,9 @@ const Register = () => {
     setSuccess(true);
 
     try {
-      const navigated = await router.replace('/');
+      // `/login` 페이지를 먼저 완료해 E2E와 브라우저 모두 가입 내비게이션의
+      // 완료 시점을 관찰할 수 있게 한 뒤, 해당 페이지가 실제 로그인 화면(`/`)으로 넘긴다.
+      const navigated = await router.replace('/login');
       if (!navigated) {
         throw new Error('Navigation cancelled');
       }
