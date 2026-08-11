@@ -66,8 +66,8 @@ class MessageReadStatusServiceIntegrationTest {
                 nullReaders.getId(),
                 otherRoom.getId());
 
-        service.updateReadStatus("room-1", requestedIds, "user-1");
-        service.updateReadStatus("room-1", requestedIds, "user-1");
+        assertThat(service.updateReadStatus("room-1", requestedIds, "user-1")).isTrue();
+        assertThat(service.updateReadStatus("room-1", requestedIds, "user-1")).isTrue();
 
         Message updatedUnread = find(unread.getId());
         Message updatedAlreadyRead = find(alreadyRead.getId());
@@ -104,10 +104,10 @@ class MessageReadStatusServiceIntegrationTest {
         }
         List<Message> saved = messageRepository.saveAll(messages);
 
-        service.updateReadStatus(
+        assertThat(service.updateReadStatus(
                 "room-1",
                 saved.stream().map(Message::getId).toList(),
-                "user-1");
+                "user-1")).isTrue();
 
         long readCount = messageRepository.findAllById(
                         saved.stream().map(Message::getId).toList())
