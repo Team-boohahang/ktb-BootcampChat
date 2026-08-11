@@ -1,30 +1,37 @@
-import { render, waitFor } from '@testing-library/react';
 import React from 'react';
+import { render, screen, waitFor } from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
-const { replaceMock } = vi.hoisted(() => ({
-  replaceMock: vi.fn(),
-}));
-
 vi.mock('next/navigation', () => ({
-  useRouter: () => ({ replace: replaceMock }),
+  useRouter: () => ({ push: vi.fn() }),
+  useSearchParams: () => new URLSearchParams('redirect=%2Fchat'),
 }));
 
-import LoginRedirectPage from '../page';
+vi.mock('@/contexts/AuthContext', () => ({
+  useAuth: () => ({ login: vi.fn() }),
+}));
 
-describe('LoginRedirectPage', () => {
+vi.mock('@/services/authService', () => ({
+  default: { checkServerConnection: vi.fn() },
+}));
+
+import LoginRoutePage from '../page';
+
+describe('LoginRoutePage', () => {
   beforeEach(() => {
-    replaceMock.mockClear();
-    window.history.replaceState({}, '', '/login');
+    window.history.replaceState({}, '', '/login?redirect=%2Fchat');
   });
 
-  it('클라이언트에서 로그인 화면으로 이동하면서 쿼리를 유지한다', async () => {
-    window.history.replaceState({}, '', '/login?redirect=%2Fchat&source=e2e');
+  it('문서 이동 없이 루트 URL에서 로그인 폼을 유지한다', async () => {
+    render(React.createElement(LoginRoutePage));
 
-    render(React.createElement(LoginRedirectPage));
+    expect(screen.getByTestId('login-email-input')).toBeEnabled();
+    expect(screen.getByTestId('login-password-input')).toBeEnabled();
+    expect(screen.getByTestId('login-submit-button')).toBeEnabled();
 
     await waitFor(() => {
-      expect(replaceMock).toHaveBeenCalledWith('/?redirect=%2Fchat&source=e2e');
+      expect(window.location.pathname).toBe('/');
+      expect(window.location.search).toBe('?redirect=%2Fchat');
     });
   });
 });
