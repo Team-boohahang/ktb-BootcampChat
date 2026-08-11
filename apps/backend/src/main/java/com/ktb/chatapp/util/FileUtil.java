@@ -32,7 +32,7 @@ public class FileUtil {
     );
 
     private static final Map<String, Long> FILE_SIZE_LIMITS = Map.of(
-        "image", 10L * 1024 * 1024,      // 10MB, 프론트 image.maxSize와 일치
+        "image", 5L * 1024 * 1024,       // 5MB, README 스펙("파일 크기 제한 (5MB)")과 일치
         "video", 5L * 1024 * 1024,       // 5MB
         "audio", 5L * 1024 * 1024,       // 5MB
         "application", 5L * 1024 * 1024  // 5MB
