@@ -106,9 +106,15 @@ const ProfileImageUpload = ({ currentImage, onImageChange }) => {
   };
 
   const handleRemoveImage = async () => {
+    const previousPreviewUrl = previewUrl;
+
     try {
       setUploading(true);
       setError('');
+
+      // 삭제 요청이 느린 환경에서도 이미 시작된 작업을 즉시 화면에 반영한다.
+      // 요청이 실패하면 catch에서 기존 이미지를 복원한다.
+      setPreviewUrl(null);
 
       // 인증 정보 확인
       if (!user?.token) {
@@ -138,6 +144,7 @@ const ProfileImageUpload = ({ currentImage, onImageChange }) => {
     } catch (error) {
       console.error('Image removal error:', error);
       setError(error.message);
+      setPreviewUrl(previousPreviewUrl);
     } finally {
       setUploading(false);
     }

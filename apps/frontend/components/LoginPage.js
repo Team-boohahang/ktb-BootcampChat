@@ -14,7 +14,11 @@ import {
   VStack,
 } from '@vapor-ui/core';
 
-const LoginPage = ({ router, redirectUrl = '/chat' }) => {
+const LoginPage = ({
+  router,
+  redirectUrl = '/chat',
+  useDocumentNavigation = false,
+}) => {
   const [formData, setFormData] = useState({ email: '', password: '' });
   const [error, setError] = useState(null);
   const [loading, setLoading] = useState(false);
@@ -55,7 +59,15 @@ const LoginPage = ({ router, redirectUrl = '/chat' }) => {
         email: formData.email.trim(),
         password: formData.password,
       });
-      router.push(redirectUrl);
+
+      if (useDocumentNavigation && typeof window !== 'undefined') {
+        // `/login`은 App Router 문서를 유지한 채 주소만 `/`로 정규화한다.
+        // 이 하이브리드 상태에서는 client router 이동이 유실될 수 있으므로,
+        // 저장된 세션을 새 문서가 다시 읽도록 명시적인 문서 이동을 사용한다.
+        window.location.assign(redirectUrl);
+      } else {
+        await router.push(redirectUrl);
+      }
     } catch (err) {
       setError(err.message || '로그인 처리 중 오류가 발생했습니다.');
     } finally {
