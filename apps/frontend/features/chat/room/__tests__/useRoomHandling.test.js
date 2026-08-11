@@ -274,6 +274,40 @@ describe('useRoomHandling', () => {
     expect(harness.setupCompleteRef.current).toBe(true);
   });
 
+  it('connects the socket and fetches room data concurrently', async () => {
+    let resolveSocket;
+    let resolveRoom;
+    const socket = createSocket();
+    socketClient.connect.mockReturnValueOnce(
+      new Promise((resolve) => {
+        resolveSocket = resolve;
+      }),
+    );
+    api.get.mockReturnValueOnce(
+      new Promise((resolve) => {
+        resolveRoom = resolve;
+      }),
+    );
+    const harness = createHarness();
+
+    const setup = harness.result.current.setupRoom();
+
+    expect(socketClient.connect).toHaveBeenCalledTimes(1);
+    expect(api.get).toHaveBeenCalledTimes(1);
+
+    resolveSocket(socket);
+    resolveRoom({
+      data: {
+        success: true,
+        data: { _id: 'room-1', name: 'Room 1', participants: [] },
+      },
+    });
+
+    await act(async () => {
+      await setup;
+    });
+  });
+
   it('falls back to fetching previous messages when join response has no messages', async () => {
     socketClient.joinRoomAndWait.mockResolvedValueOnce({ roomId: 'room-1' });
     const harness = createHarness();

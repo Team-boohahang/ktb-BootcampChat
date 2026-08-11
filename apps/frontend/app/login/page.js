@@ -1,17 +1,10 @@
-'use client';
+import { Suspense } from 'react';
+import LoginRouteContent from './LoginRouteContent';
 
-import { useEffect } from 'react';
-import { useRouter } from 'next/navigation';
+const LoginRoutePage = () => (
+  <Suspense fallback={null}>
+    <LoginRouteContent />
+  </Suspense>
+);
 
-const LoginRedirectPage = () => {
-  const router = useRouter();
-
-  useEffect(() => {
-    const queryString = window.location.search;
-    router.replace(queryString ? `/${queryString}` : '/');
-  }, [router]);
-
-  return null;
-};
-
-export default LoginRedirectPage;
+export default LoginRoutePage;

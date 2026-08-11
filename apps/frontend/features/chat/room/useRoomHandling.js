@@ -77,22 +77,22 @@ export const useRoomHandling = ({
     }
 
     const handlers = createRoomEventHandlers({
-        mountedRef,
-        messageProcessingRef,
-        processedMessageIds,
-        initialLoadCompletedRef,
-        processMessages,
-        setRoom,
-        setMessages,
-        setLoadingMessages,
-        setError,
-        setHasMoreMessages,
-        cleanup,
-        logout,
-        onReplace,
-        handleReactionUpdate,
-        showRejectedMessage: Toast.error.bind(Toast),
-      });
+      mountedRef,
+      messageProcessingRef,
+      processedMessageIds,
+      initialLoadCompletedRef,
+      processMessages,
+      setRoom,
+      setMessages,
+      setLoadingMessages,
+      setError,
+      setHasMoreMessages,
+      cleanup,
+      logout,
+      onReplace,
+      handleReactionUpdate,
+      showRejectedMessage: Toast.error.bind(Toast),
+    });
     const unsubscribe = socketClient.subscribeRoomEvents(
       socketRef.current,
       handlers
@@ -342,11 +342,36 @@ export const useRoomHandling = ({
       try {
         initializingRef.current = true;
         setupStarted();
-        // 1. Socket Setup
-        attachSocket(await setupSocket());
+        // 소켓 연결과 방 정보 조회는 서로 의존하지 않으므로 동시에 시작한다.
+        // allSettled로 두 작업을 끝까지 회수해 한쪽 실패 시 늦게 연결된 소켓이
+        // 정리되지 않은 채 남는 것도 막는다.
+        const [socketResult, roomDataResult] = await Promise.allSettled([
+          setupSocket(),
+          fetchRoomData(roomId),
+        ]);
 
-        // 2. Fetch Room Data
-        const roomData = await fetchRoomData(roomId);
+        if (
+          socketResult.status === 'rejected' ||
+          roomDataResult.status === 'rejected'
+        ) {
+          if (socketResult.status === 'fulfilled') {
+            socketResult.value.disconnect();
+          }
+
+          throw socketResult.status === 'rejected'
+            ? socketResult.reason
+            : roomDataResult.reason;
+        }
+
+        if (!mountedRef.current) {
+          socketResult.value.disconnect();
+          return;
+        }
+
+        attachSocket(socketResult.value);
+
+        attachSocket(socketResult.value);
+        const roomData = roomDataResult.value;
 
         // Ensure current user is included in participants for display
         if (currentUser && roomData.participants) {
@@ -445,7 +470,7 @@ export const useRoomHandling = ({
       }
 
       // 언마운트 경로는 attachSocket 을 쓰지 않는다. 사라지는 컴포넌트에
-       // 소켓 교체를 통지할 구독자가 없다.
+      // 소켓 교체를 통지할 구독자가 없다.
       if (socketRef.current) {
         socketRef.current.disconnect();
         socketRef.current = null;

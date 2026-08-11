@@ -1,4 +1,11 @@
-import { createContext, useState, useEffect, useCallback, useRef, useContext } from 'react';
+import {
+  createContext,
+  useState,
+  useEffect,
+  useCallback,
+  useRef,
+  useContext,
+} from 'react';
 import { useRouter } from 'next/router';
 import socketService from '../services/socket';
 import authService from '../services/authService';
@@ -74,15 +81,18 @@ export const AuthProviderWithRouter = ({ children, router }) => {
     }
 
     // 5분마다 세션 타임아웃 체크
-    sessionCheckInterval.current = setInterval(() => {
-      const currentUser = loadUserFromStorage();
-      if (!currentUser) {
-        // 세션 만료됨
-        setUser(null);
-        socketService.disconnect();
-        router.replace('/');
-      }
-    }, 5 * 60 * 1000);
+    sessionCheckInterval.current = setInterval(
+      () => {
+        const currentUser = loadUserFromStorage();
+        if (!currentUser) {
+          // 세션 만료됨
+          setUser(null);
+          socketService.disconnect();
+          router.replace('/');
+        }
+      },
+      5 * 60 * 1000
+    );
 
     return () => {
       if (sessionCheckInterval.current) {
@@ -99,28 +109,29 @@ export const AuthProviderWithRouter = ({ children, router }) => {
   }, [loadUserFromStorage]);
 
   // 로그인 (API 호출 + 상태 저장)
-  const login = useCallback(async (credentials) => {
-    const userData = await authService.login(credentials);
-    saveUser(userData);
-    return userData;
-  }, [saveUser]);
+  const login = useCallback(
+    async (credentials) => {
+      const userData = await authService.login(credentials);
+      saveUser(userData);
+      return userData;
+    },
+    [saveUser]
+  );
 
   // 로그아웃 (API 호출 + 상태 정리)
   const logout = useCallback(async () => {
+    // 서버 응답이 느려도 로컬 로그아웃과 화면 이동을 지연시키지 않는다.
+    void authService.logout(user?.token, user?.sessionId);
+
+    socketService.disconnect();
+    saveUser(null);
+
     try {
-      // authService를 통해 로그아웃 API 호출
-      await authService.logout(user?.token, user?.sessionId);
+      await router.push('/');
     } catch (error) {
-      console.error('Logout error:', error);
-    } finally {
-      // 소켓 연결 해제
-      socketService.disconnect();
-
-      // 로컬 상태 정리
-      saveUser(null);
-
-      // 로그인 페이지로 이동
-      router.push('/');
+      // 로컬 세션은 이미 정리됐으므로 라우팅 실패가 로그아웃이나
+      // 세션 만료 오류를 덮어쓰지 않게 한다.
+      console.error('Logout navigation error:', error);
     }
   }, [user, saveUser, router]);
 
@@ -131,42 +142,48 @@ export const AuthProviderWithRouter = ({ children, router }) => {
   }, []);
 
   // 프로필 업데이트 (API 호출 + 상태 저장)
-  const updateProfile = useCallback(async (updates) => {
-    if (!user) return;
+  const updateProfile = useCallback(
+    async (updates) => {
+      if (!user) return;
 
-    const updatedUserData = await authService.updateProfile(
-      updates,
-      user.token,
-      user.sessionId
-    );
+      const updatedUserData = await authService.updateProfile(
+        updates,
+        user.token,
+        user.sessionId
+      );
 
-    const updatedUser = {
-      ...user,
-      ...updatedUserData,
-      token: user.token,
-      sessionId: user.sessionId,
-      lastActivity: Date.now()
-    };
+      const updatedUser = {
+        ...user,
+        ...updatedUserData,
+        token: user.token,
+        sessionId: user.sessionId,
+        lastActivity: Date.now(),
+      };
 
-    saveUser(updatedUser);
-    return updatedUser;
-  }, [user, saveUser]);
+      saveUser(updatedUser);
+      return updatedUser;
+    },
+    [user, saveUser]
+  );
 
   // 사용자 정보 직접 업데이트 (외부에서 사용)
-  const updateUser = useCallback((userData) => {
-    if (!userData) {
-      saveUser(null);
-      return;
-    }
+  const updateUser = useCallback(
+    (userData) => {
+      if (!userData) {
+        saveUser(null);
+        return;
+      }
 
-    const updatedUser = {
-      ...user,
-      ...userData,
-      lastActivity: Date.now()
-    };
+      const updatedUser = {
+        ...user,
+        ...userData,
+        lastActivity: Date.now(),
+      };
 
-    saveUser(updatedUser);
-  }, [user, saveUser]);
+      saveUser(updatedUser);
+    },
+    [user, saveUser]
+  );
 
   // 토큰 검증
   const verifyToken = useCallback(async () => {
@@ -177,15 +194,22 @@ export const AuthProviderWithRouter = ({ children, router }) => {
 
       // 마지막 검증 시간 확인
       const lastVerification = getLastTokenVerification();
-      if (lastVerification && Date.now() - lastVerification < TOKEN_VERIFICATION_INTERVAL) {
+      if (
+        lastVerification &&
+        Date.now() - lastVerification < TOKEN_VERIFICATION_INTERVAL
+      ) {
         return true;
       }
 
       // authService를 통해 토큰 검증 (API 호출)
-      const response = await api.post('/api/auth/verify-token', {}, {
-        handleAuthError: false,
-        headers: getAuthHeaders(user),
-      });
+      const response = await api.post(
+        '/api/auth/verify-token',
+        {},
+        {
+          handleAuthError: false,
+          headers: getAuthHeaders(user),
+        }
+      );
 
       const data = response.data;
 
@@ -217,10 +241,14 @@ export const AuthProviderWithRouter = ({ children, router }) => {
         throw new Error('인증 정보가 없습니다.');
       }
 
-      const response = await api.post('/api/auth/refresh-token', {}, {
-        handleAuthError: false,
-        headers: getAuthHeaders(user),
-      });
+      const response = await api.post(
+        '/api/auth/refresh-token',
+        {},
+        {
+          handleAuthError: false,
+          headers: getAuthHeaders(user),
+        }
+      );
 
       const data = response.data;
 
@@ -228,7 +256,7 @@ export const AuthProviderWithRouter = ({ children, router }) => {
         const updatedUser = {
           ...user,
           token: data.token,
-          lastActivity: Date.now()
+          lastActivity: Date.now(),
         };
         saveUser(updatedUser);
         return data.token;
@@ -251,23 +279,17 @@ export const AuthProviderWithRouter = ({ children, router }) => {
     updateProfile,
     updateUser,
     verifyToken,
-    refreshToken
+    refreshToken,
   };
 
-  return (
-    <AuthContext.Provider value={value}>
-      {children}
-    </AuthContext.Provider>
-  );
+  return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;
 };
 
 export const AuthProvider = ({ children }) => {
   const router = useRouter();
 
   return (
-    <AuthProviderWithRouter router={router}>
-      {children}
-    </AuthProviderWithRouter>
+    <AuthProviderWithRouter router={router}>{children}</AuthProviderWithRouter>
   );
 };
 
@@ -292,14 +314,16 @@ export const withAuth = (WrappedComponent) => {
     // 로딩 중이거나 인증되지 않은 경우 로딩 화면 표시
     if (isLoading || !isAuthenticated) {
       return (
-        <div style={{
-          display: 'flex',
-          alignItems: 'center',
-          justifyContent: 'center',
-          height: '100vh',
-          backgroundColor: 'var(--vapor-color-background)',
-          color: 'var(--vapor-color-text-primary)'
-        }}>
+        <div
+          style={{
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            height: '100vh',
+            backgroundColor: 'var(--vapor-color-background)',
+            color: 'var(--vapor-color-text-primary)',
+          }}
+        >
           <div>Loading...</div>
         </div>
       );
@@ -309,7 +333,8 @@ export const withAuth = (WrappedComponent) => {
   };
 
   // HOC에 displayName 설정
-  const displayName = WrappedComponent.displayName || WrappedComponent.name || 'Component';
+  const displayName =
+    WrappedComponent.displayName || WrappedComponent.name || 'Component';
   WithAuthComponent.displayName = `WithAuth(${displayName})`;
 
   return WithAuthComponent;
@@ -336,14 +361,16 @@ export const withoutAuth = (WrappedComponent) => {
     // 로딩 중이거나 이미 로그인된 사용자인 경우 로딩 화면
     if (isLoading || isAuthenticated) {
       return (
-        <div style={{
-          display: 'flex',
-          alignItems: 'center',
-          justifyContent: 'center',
-          height: '100vh',
-          backgroundColor: 'var(--vapor-color-background)',
-          color: 'var(--vapor-color-text-primary)'
-        }}>
+        <div
+          style={{
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            height: '100vh',
+            backgroundColor: 'var(--vapor-color-background)',
+            color: 'var(--vapor-color-text-primary)',
+          }}
+        >
           <div>Loading...</div>
         </div>
       );
@@ -352,7 +379,8 @@ export const withoutAuth = (WrappedComponent) => {
     return <WrappedComponent {...props} />;
   };
 
-  const displayName = WrappedComponent.displayName || WrappedComponent.name || 'Component';
+  const displayName =
+    WrappedComponent.displayName || WrappedComponent.name || 'Component';
   WithoutAuthComponent.displayName = `WithoutAuth(${displayName})`;
 
   return WithoutAuthComponent;
