@@ -110,7 +110,7 @@ class FileControllerTest {
                         "Content-Disposition",
                         "inline; filename=\"" + ORIGINAL_NAME + "\"; filename*=UTF-8''"
                                 + ENCODED_ORIGINAL_NAME))
-                .andExpect(header().string("Cache-Control", "max-age=31536000, private, immutable"));
+                .andExpect(header().string("Cache-Control", "max-age=600, private, immutable"));
     }
 
     @Test

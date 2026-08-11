@@ -231,12 +231,13 @@ public class FileController {
         );
 
         // 파일명이 업로드마다 새로 생성되어 같은 URL은 항상 같은 내용을 가리킴 -> 재검증 없이 캐싱 가능
-        // 인가가 필요한 리소스이므로 공유 캐시에는 태우지 않고 브라우저 캐시에만 허용
+        // 인가가 필요한 리소스이므로 공유 캐시에는 태우지 않고 브라우저 캐시에만 허용.
+        // 파일 삭제/권한 철회가 캐시 히트 동안엔 반영안됨 -> TTL을 10분으로 유지
         return ResponseEntity.ok()
                 .contentType(MediaType.parseMediaType(stream.contentType()))
                 .contentLength(stream.size())
                 .header(HttpHeaders.CONTENT_DISPOSITION, contentDisposition)
-                .cacheControl(CacheControl.maxAge(365, TimeUnit.DAYS).cachePrivate().immutable())
+                .cacheControl(CacheControl.maxAge(10, TimeUnit.MINUTES).cachePrivate().immutable())
                 .body(stream.resource());
     }
 
