@@ -143,6 +143,21 @@ describe('ChatRoomsView', () => {
     });
 
     expect(screen.queryByTestId('refresh-rooms-button')).toBeNull();
+    expect(screen.queryByTestId('rooms-error-overlay')).toBeNull();
+  });
+
+  it('shows non-fatal refresh errors as an overlay inside the stable list slot', () => {
+    mocks.connectionStatus = CONNECTION_STATUS.CONNECTED;
+    mocks.error = { title: '갱신 실패', message: '목록을 갱신하지 못했습니다.', type: 'warning' };
+
+    render(<ChatRoomsView router={{ push: vi.fn() }} />);
+
+    expect(screen.getByTestId('rooms-error-overlay')).toHaveStyle({
+      position: 'absolute',
+    });
+    expect(screen.getByTestId('room-list-content-slot')).toContainElement(
+      screen.getByTestId('rooms-error-overlay')
+    );
   });
 
   it('reserves the room list height before room data is available', () => {

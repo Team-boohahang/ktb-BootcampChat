@@ -94,40 +94,6 @@ const ChatRoomView = ({ roomId, onNavigate, onReplace, asPath }) => {
     </ChatRoomShell>
   );
 
-  const renderContent = () => {
-    // 재연결 중에는 메시지를 그대로 두고 ChatRoomInfo 의 배지로만 알린다.
-    // 복구 가능한 상태를 오류 화면으로 덮으면 실제 장애와 구분되지 않는다.
-    if (messageLoadError) {
-      return (
-        <div className="d-flex flex-column align-items-center justify-content-center p-4">
-          <Callout.Root
-            colorPalette="danger"
-            className="mb-4 d-flex align-items-center"
-          >
-            <Callout.Icon>
-              <ErrorCircleOutlineIcon className="w-5 h-5 me-2" />
-            </Callout.Icon>
-            <span>메시지 로딩 중 오류가 발생했습니다.</span>
-          </Callout.Root>
-          <Button onClick={retryMessageLoad}>메시지 다시 로드</Button>
-        </div>
-      );
-    }
-
-    return (
-      <ChatMessages
-        messages={messages}
-        currentUser={currentUser}
-        room={room}
-        onReactionAdd={handleReactionAdd}
-        onReactionRemove={handleReactionRemove}
-        loadingMessages={loadingMessages}
-        hasMoreMessages={hasMoreMessages}
-        onLoadMore={handleLoadMore}
-      />
-    );
-  };
-
   if (error) {
     return renderErrorState();
   }
@@ -144,12 +110,47 @@ const ChatRoomView = ({ roomId, onNavigate, onReplace, asPath }) => {
       {/* 메시지 영역 */}
       <VStack
         className="flex-1"
+        style={{ position: 'relative' }}
         $css={{
           overflow: 'hidden',
           minHeight: '0',
         }}
       >
-        {renderContent()}
+        {messageLoadError && (
+          <div
+            data-testid="message-load-error-overlay"
+            style={{
+              position: 'absolute',
+              top: 'var(--vapor-space-200)',
+              left: 'var(--vapor-space-300)',
+              right: 'var(--vapor-space-300)',
+              zIndex: 2,
+              display: 'flex',
+              justifyContent: 'center',
+            }}
+          >
+            <Callout.Root colorPalette="danger">
+              <Callout.Icon>
+                <ErrorCircleOutlineIcon className="w-5 h-5" />
+              </Callout.Icon>
+              <span>메시지 로딩 중 오류가 발생했습니다.</span>
+              <Button variant="outline" size="sm" onClick={retryMessageLoad}>
+                메시지 다시 로드
+              </Button>
+            </Callout.Root>
+          </div>
+        )}
+
+        <ChatMessages
+          messages={messages}
+          currentUser={currentUser}
+          room={room}
+          onReactionAdd={handleReactionAdd}
+          onReactionRemove={handleReactionRemove}
+          loadingMessages={loadingMessages}
+          hasMoreMessages={hasMoreMessages}
+          onLoadMore={handleLoadMore}
+        />
       </VStack>
 
       {/* 입력 영역 */}

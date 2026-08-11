@@ -65,4 +65,21 @@ describe('ChatRoomView', () => {
     });
     expect(screen.getByLabelText('채팅방 연결 중')).toBeInTheDocument();
   });
+
+  it('keeps messages in place while showing a message loading error overlay', () => {
+    mocks.chatRoom = {
+      ...mocks.chatRoom,
+      room: { _id: 'room-1', name: '테스트방', participants: [] },
+      loading: false,
+      messageLoadError: new Error('메시지 로드 실패'),
+    };
+
+    render(<ChatRoomView roomId="room-1" onNavigate={vi.fn()} onReplace={vi.fn()} asPath="/chat/room-1" />);
+
+    expect(screen.getByText('chat messages')).toBeInTheDocument();
+    expect(screen.getByTestId('message-load-error-overlay')).toHaveStyle({
+      position: 'absolute',
+    });
+    expect(screen.getByRole('button', { name: '메시지 다시 로드' })).toBeInTheDocument();
+  });
 });
