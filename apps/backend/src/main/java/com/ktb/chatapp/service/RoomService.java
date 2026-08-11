@@ -185,45 +185,9 @@ public class RoomService {
     }
 
     private RoomResponse mapToRoomResponse(Room room, String name) {
-        return mapToRoomResponse(
-                room, name, recentMessageCounter.countRecentMessages(room != null ? room.getId() : null));
-    }
-
-    private RoomResponse mapToRoomResponse(Room room, String name, int recentMessageCount) {
         if (room == null) return null;
-
-        User creator = null;
-        if (room.getCreator() != null) {
-            creator = userRepository.findById(room.getCreator()).orElse(null);
-        }
-
-        List<User> participants = room.getParticipantIds().stream()
-            .map(userRepository::findById)
-            .filter(Optional::isPresent)
-            .map(Optional::get)
-            .toList();
-
-        return RoomResponse.builder()
-            .id(room.getId())
-            .name(room.getName() != null ? room.getName() : "제목 없음")
-            .hasPassword(room.isHasPassword())
-            .creator(creator != null ? UserResponse.builder()
-                .id(creator.getId())
-                .name(creator.getName() != null ? creator.getName() : "알 수 없음")
-                .email(creator.getEmail() != null ? creator.getEmail() : "")
-                .build() : null)
-            .participants(participants.stream()
-                .filter(p -> p != null && p.getId() != null)
-                .map(p -> UserResponse.builder()
-                    .id(p.getId())
-                    .name(p.getName() != null ? p.getName() : "알 수 없음")
-                    .email(p.getEmail() != null ? p.getEmail() : "")
-                    .build())
-                .collect(Collectors.toList()))
-            .createdAtDateTime(room.getCreatedAt())
-            .isCreator(creator != null && creator.getId().equals(name))
-            .recentMessageCount(recentMessageCount)
-            .build();
+        int recentMessageCount = recentMessageCounter.countRecentMessages(room.getId());
+        return mapToRoomResponse(room, name, recentMessageCount, findRoomUsersById(List.of(room)));
     }
 
     private RoomResponse mapToRoomResponse(
