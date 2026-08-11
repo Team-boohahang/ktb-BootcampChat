@@ -26,7 +26,7 @@ public class ConnectedUsers {
     }
     
     public int size() {
-        return chatDataStore.size();
+        return chatDataStore.size(USER_SOCKET_KEY_PREFIX);
     }
     
     private String buildKey(String userId) {
