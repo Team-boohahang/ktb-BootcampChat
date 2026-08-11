@@ -12,7 +12,6 @@ import java.time.Duration;
 import java.util.HashSet;
 import java.util.Map;
 import java.util.Set;
-import java.util.UUID;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.stereotype.Component;
@@ -28,6 +27,10 @@ import static com.ktb.chatapp.websocket.socketio.SocketIOEvents.*;
 @Component
 @ConditionalOnProperty(name = "socketio.enabled", havingValue = "true", matchIfMissing = true)
 public class ConnectionLoginHandler {
+
+    private static final String USER_ROOM_PREFIX = "user:";
+    private static final String SOCKET_SESSION_ROOM_PREFIX = "socket:";
+    private static final String ROOM_LIST_ROOM = "room-list";
 
     private final SocketIOServer socketIOServer;
     private final ConnectedUsers connectedUsers;
@@ -72,7 +75,7 @@ public class ConnectionLoginHandler {
             log.info("Socket.IO user connected: {} ({}) - Total concurrent users: {}",
                     getUserName(client), userId, connectedUsers.size());
 
-            client.joinRooms(Set.of("user:" + userId, "room-list"));
+            client.joinRooms(Set.of(USER_ROOM_PREFIX + userId, SOCKET_SESSION_ROOM_PREFIX + client.getSessionId(), ROOM_LIST_ROOM));
             
         } catch (Exception e) {
             log.error("Error handling Socket.IO connection", e);
@@ -105,7 +108,7 @@ public class ConnectionLoginHandler {
                 log.warn("Socket.IO disconnect: User {} has a different active connection. Skipping cleanup.", userId);
             }
 
-            client.leaveRooms(Set.of("user:" + userId, "room-list"));
+            client.leaveRooms(Set.of(USER_ROOM_PREFIX + userId, SOCKET_SESSION_ROOM_PREFIX + client.getSessionId(), ROOM_LIST_ROOM));
             client.del("user");
 
             log.info("Socket.IO user disconnected: {} ({}) - Total concurrent users: {}",
@@ -133,23 +136,15 @@ public class ConnectionLoginHandler {
         return user != null ? user.name() : null;
     }
     
-    /**
-     * TODO 멀티 클러스터에서 동작 안함
-     * socketIOServer.getRoomOperations("user:" + userId) 로 처리 변경.
-     */
     private void notifyDuplicateLogin(SocketIOClient client, String userId) {
         var socketUser = connectedUsers.get(userId);
         if (socketUser == null) {
             return;
         }
         String existingSocketId = socketUser.socketId();
-        SocketIOClient existingClient = socketIOServer.getClient(UUID.fromString(existingSocketId));
-        if (existingClient == null) {
-            return;
-        }
-        
-        // Send duplicate login notification
-        existingClient.sendEvent(DUPLICATE_LOGIN, Map.of(
+        String existingSocketRoom = SOCKET_SESSION_ROOM_PREFIX + existingSocketId;
+
+        socketIOServer.getRoomOperations(existingSocketRoom).sendEvent(DUPLICATE_LOGIN, Map.of(
                 "type", "new_login_attempt",
                 "deviceInfo", client.getHandshakeData().getHttpHeaders().get("User-Agent"),
                 "ipAddress", client.getRemoteAddress().toString(),
@@ -159,7 +154,7 @@ public class ConnectionLoginHandler {
         new Thread(() -> {
             try {
                 Thread.sleep(Duration.ofSeconds(10));
-                existingClient.sendEvent(SESSION_ENDED, Map.of(
+                socketIOServer.getRoomOperations(existingSocketRoom).sendEvent(SESSION_ENDED, Map.of(
                         "reason", "duplicate_login",
                         "message", "다른 기기에서 로그인하여 현재 세션이 종료되었습니다."
                 ));

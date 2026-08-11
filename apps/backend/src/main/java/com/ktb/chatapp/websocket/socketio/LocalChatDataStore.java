@@ -36,7 +36,9 @@ public class LocalChatDataStore implements ChatDataStore {
     }
     
     @Override
-    public int size() {
-        return storage.size();
+    public int size(String keyPrefix) {
+        return (int) storage.keySet().stream()
+                .filter(key -> key.startsWith(keyPrefix))
+                .count();
     }
 }

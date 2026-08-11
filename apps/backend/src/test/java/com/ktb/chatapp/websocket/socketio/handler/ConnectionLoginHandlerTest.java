@@ -24,7 +24,6 @@ class ConnectionLoginHandlerTest {
     @Mock private ConnectedUsers connectedUsers;
     @Mock private UserRooms userRooms;
     @Mock private RoomJoinHandler roomJoinHandler;
-    @Mock private RoomLeaveHandler roomLeaveHandler;
     @Mock private SocketIOClient client;
 
     private ConnectionLoginHandler handler;
@@ -36,15 +35,16 @@ class ConnectionLoginHandlerTest {
                 connectedUsers,
                 userRooms,
                 roomJoinHandler,
-                roomLeaveHandler,
                 new SimpleMeterRegistry());
     }
 
     @Test
     void onConnect_setsUserRejoinsRoomsStoresUserAndJoinsUserRooms() {
-        SocketUser user = new SocketUser("user-1", "tester", "session-1", "socket-1");
+        UUID socketId = UUID.randomUUID();
+        SocketUser user = new SocketUser("user-1", "tester", "session-1", socketId.toString());
         when(connectedUsers.get(user.id())).thenReturn(null);
         when(client.get("user")).thenReturn(user);
+        when(client.getSessionId()).thenReturn(socketId);
         when(userRooms.get(user.id())).thenReturn(Set.of("room-1", "room-2"));
 
         handler.onConnect(client, user);
@@ -53,11 +53,11 @@ class ConnectionLoginHandlerTest {
         verify(roomJoinHandler).handleJoinRoom(client, "room-1");
         verify(roomJoinHandler).handleJoinRoom(client, "room-2");
         verify(connectedUsers).set(user.id(), user);
-        verify(client).joinRooms(Set.of("user:" + user.id(), "room-list"));
+        verify(client).joinRooms(Set.of("user:" + user.id(), "socket:" + socketId, "room-list"));
     }
 
     @Test
-    void onDisconnect_removesCurrentConnectionAndLeavesRooms() {
+    void onDisconnect_removesCurrentConnectionAndClearsRooms() {
         UUID socketId = UUID.randomUUID();
         SocketUser user = new SocketUser("user-1", "tester", "session-1", socketId.toString());
         when(client.get("user")).thenReturn(user);
@@ -67,10 +67,10 @@ class ConnectionLoginHandlerTest {
 
         handler.onDisconnect(client);
 
-        verify(roomLeaveHandler).handleLeaveRoom(client, "room-1");
+        verify(client).leaveRoom("room-1");
+        verify(userRooms).clear(user.id());
         verify(connectedUsers).del(user.id());
-        verify(client).leaveRooms(Set.of("user:" + user.id(), "room-list"));
+        verify(client).leaveRooms(Set.of("user:" + user.id(), "socket:" + socketId, "room-list"));
         verify(client).del("user");
-        verify(client).disconnect();
     }
 }

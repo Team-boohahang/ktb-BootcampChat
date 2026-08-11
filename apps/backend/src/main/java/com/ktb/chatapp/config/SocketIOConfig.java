@@ -7,12 +7,19 @@ import com.corundumstudio.socketio.annotation.SpringAnnotationScanner;
 import com.corundumstudio.socketio.namespace.Namespace;
 import com.corundumstudio.socketio.protocol.JacksonJsonSupport;
 import com.corundumstudio.socketio.store.MemoryStoreFactory;
+import com.corundumstudio.socketio.store.RedissonStoreFactory;
+import com.corundumstudio.socketio.store.StoreFactory;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.datatype.jsr310.JavaTimeModule;
 import com.ktb.chatapp.websocket.socketio.ChatDataStore;
 import com.ktb.chatapp.websocket.socketio.LocalChatDataStore;
+import com.ktb.chatapp.websocket.socketio.RedisChatDataStore;
 import io.micrometer.core.instrument.Counter;
 import io.micrometer.core.instrument.MeterRegistry;
 import lombok.extern.slf4j.Slf4j;
+import org.redisson.Redisson;
+import org.redisson.api.RedissonClient;
+import org.redisson.config.Config;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.beans.factory.config.BeanPostProcessor;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
@@ -20,6 +27,8 @@ import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.context.annotation.Lazy;
 import org.springframework.context.annotation.Role;
+import org.springframework.data.redis.core.StringRedisTemplate;
+import org.springframework.util.StringUtils;
 
 import static org.springframework.beans.factory.config.BeanDefinition.ROLE_INFRASTRUCTURE;
 
@@ -64,8 +73,20 @@ public class SocketIOConfig {
     @Value("${socketio.server.worker-threads:0}")
     private int workerThreads;
 
+    @Value("${spring.data.redis.host:localhost}")
+    private String redisHost;
+
+    @Value("${spring.data.redis.port:6379}")
+    private int redisPort;
+
+    @Value("${spring.data.redis.password:}")
+    private String redisPassword;
+
     @Bean(initMethod = "start", destroyMethod = "stop")
-    public SocketIOServer socketIOServer(AuthTokenListener authTokenListener, MeterRegistry meterRegistry) {
+    public SocketIOServer socketIOServer(
+            AuthTokenListener authTokenListener,
+            MeterRegistry meterRegistry,
+            StoreFactory socketIoStoreFactory) {
         com.corundumstudio.socketio.Configuration config = new com.corundumstudio.socketio.Configuration();
         config.setHostname(host);
         config.setPort(port);
@@ -93,13 +114,13 @@ public class SocketIOConfig {
         config.setUpgradeTimeout(upgradeTimeout);
 
         config.setJsonSupport(new JacksonJsonSupport(new JavaTimeModule()));
-        config.setStoreFactory(new MemoryStoreFactory()); // 단일노드 전용
+        config.setStoreFactory(socketIoStoreFactory);
 
         log.info(
-                "Socket.IO server configured on {}:{} with {} boss threads, {} worker threads, backlog={}, sendBuffer={}, receiveBuffer={}, tcpNoDelay={}, pingInterval={}ms, pingTimeout={}ms, upgradeTimeout={}ms",
+                "Socket.IO server configured on {}:{} with {} boss threads, {} worker threads, backlog={}, sendBuffer={}, receiveBuffer={}, tcpNoDelay={}, pingInterval={}ms, pingTimeout={}ms, upgradeTimeout={}ms, storeFactory={}",
                 host, port, config.getBossThreads(), config.getWorkerThreads(),
                 acceptBackLog, tcpSendBufferSize, tcpReceiveBufferSize, tcpNoDelay,
-                pingInterval, pingTimeout, upgradeTimeout
+                pingInterval, pingTimeout, upgradeTimeout, socketIoStoreFactory.getClass().getSimpleName()
         );
         var socketIOServer = new SocketIOServer(config);
         socketIOServer.getNamespace(Namespace.DEFAULT_NAME).addAuthTokenListener(authTokenListener);
@@ -114,6 +135,33 @@ public class SocketIOConfig {
         
         return socketIOServer;
     }
+
+    @Bean
+    @ConditionalOnProperty(name = "socketio.store.type", havingValue = "memory", matchIfMissing = true)
+    public StoreFactory memorySocketIoStoreFactory() {
+        log.info("Socket.IO store factory: memory (single instance only)");
+        return new MemoryStoreFactory();
+    }
+
+    @Bean(destroyMethod = "shutdown")
+    @ConditionalOnProperty(name = "socketio.store.type", havingValue = "redis")
+    public RedissonClient socketIoRedissonClient() {
+        Config config = new Config();
+        var serverConfig = config.useSingleServer()
+                .setAddress("redis://" + redisHost + ":" + redisPort);
+        if (StringUtils.hasText(redisPassword)) {
+            serverConfig.setPassword(redisPassword);
+        }
+        log.info("Socket.IO Redis store configured for {}:{}", redisHost, redisPort);
+        return Redisson.create(config);
+    }
+
+    @Bean
+    @ConditionalOnProperty(name = "socketio.store.type", havingValue = "redis")
+    public StoreFactory redisSocketIoStoreFactory(RedissonClient socketIoRedissonClient) {
+        log.info("Socket.IO store factory: redis (multi-instance Pub/Sub enabled)");
+        return new RedissonStoreFactory(socketIoRedissonClient);
+    }
     
     /**
      * SpringAnnotationScanner는 BeanPostProcessor로서
@@ -127,10 +175,15 @@ public class SocketIOConfig {
         return new SpringAnnotationScanner(socketIOServer);
     }
     
-    // 인메모리 저장소, 단일 노드 환경에서만 사용
     @Bean
-    @ConditionalOnProperty(name = "socketio.enabled", havingValue = "true", matchIfMissing = true)
-    public ChatDataStore chatDataStore() {
+    @ConditionalOnProperty(name = "socketio.store.type", havingValue = "memory", matchIfMissing = true)
+    public ChatDataStore localChatDataStore() {
         return new LocalChatDataStore();
+    }
+
+    @Bean
+    @ConditionalOnProperty(name = "socketio.store.type", havingValue = "redis")
+    public ChatDataStore redisChatDataStore(StringRedisTemplate redisTemplate) {
+        return new RedisChatDataStore(redisTemplate, new ObjectMapper().registerModule(new JavaTimeModule()));
     }
 }
