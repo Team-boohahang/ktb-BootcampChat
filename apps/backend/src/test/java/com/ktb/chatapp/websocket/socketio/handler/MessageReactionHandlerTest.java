@@ -10,6 +10,7 @@ import com.ktb.chatapp.repository.MessageRepository;
 import com.ktb.chatapp.websocket.socketio.SocketUser;
 import java.util.HashMap;
 import java.util.HashSet;
+import java.util.LinkedHashSet;
 import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
@@ -34,6 +35,7 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.timeout;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
@@ -169,6 +171,105 @@ class MessageReactionHandlerTest {
     }
 
     @Test
+    void handleMessageReaction_debouncesTenUpdatesForSameMessageIntoOneBroadcast() {
+        MessageReactionRequest request =
+                new MessageReactionRequest("👍", "message-1", "add", "👍");
+
+        when(client.get("user"))
+                .thenReturn(new SocketUser("user-1", "tester", "session-1", "socket-1"));
+        when(mongoTemplate.findAndModify(
+                any(Query.class),
+                any(Update.class),
+                any(FindAndModifyOptions.class),
+                eq(Message.class))).thenAnswer(invocation -> {
+                    int applied = (int) handler.reactionChangesApplied() + 1;
+                    Set<String> users = new LinkedHashSet<>();
+                    for (int i = 1; i <= applied; i++) {
+                        users.add("user-" + i);
+                    }
+                    return Message.builder()
+                            .id("message-1")
+                            .roomId("room-1")
+                            .reactions(Map.of("👍", users))
+                            .build();
+                });
+        when(socketIOServer.getRoomOperations("room-1")).thenReturn(roomOperations);
+
+        for (int i = 0; i < 10; i++) {
+            handler.handleMessageReaction(client, request);
+        }
+
+        ArgumentCaptor<Object> responseCaptor = ArgumentCaptor.forClass(Object.class);
+        verify(roomOperations, timeout(800).times(1))
+                .sendEvent(eq(MESSAGE_REACTION_UPDATE), responseCaptor.capture());
+        MessageReactionResponse response = (MessageReactionResponse) responseCaptor.getValue();
+        assertEquals(10, response.getReactions().get("👍").size());
+        assertEquals(10, handler.reactionChangesApplied());
+        assertEquals(1, handler.reactionBroadcastEmits());
+        assertEquals(9, handler.coalescedReactionUpdates());
+        verify(mongoTemplate, times(10)).findAndModify(
+                any(Query.class),
+                any(Update.class),
+                any(FindAndModifyOptions.class),
+                eq(Message.class));
+    }
+
+    @Test
+    void handleMessageReaction_coalescesDifferentMessagesIndependently() {
+        when(client.get("user"))
+                .thenReturn(new SocketUser("user-1", "tester", "session-1", "socket-1"));
+        when(mongoTemplate.findAndModify(
+                any(Query.class),
+                any(Update.class),
+                any(FindAndModifyOptions.class),
+                eq(Message.class))).thenReturn(
+                        message("message-1", "room-1", Set.of("user-1")),
+                        message("message-2", "room-1", Set.of("user-1")),
+                        message("message-3", "room-1", Set.of("user-1")));
+        when(socketIOServer.getRoomOperations("room-1")).thenReturn(roomOperations);
+
+        handler.handleMessageReaction(client, new MessageReactionRequest("👍", "message-1", "add", "👍"));
+        handler.handleMessageReaction(client, new MessageReactionRequest("👍", "message-2", "add", "👍"));
+        handler.handleMessageReaction(client, new MessageReactionRequest("👍", "message-3", "add", "👍"));
+
+        verify(roomOperations, timeout(800).times(3))
+                .sendEvent(eq(MESSAGE_REACTION_UPDATE), any());
+        assertEquals(3, handler.reactionChangesApplied());
+        assertEquals(3, handler.reactionBroadcastEmits());
+        assertEquals(0, handler.coalescedReactionUpdates());
+    }
+
+    @Test
+    void handleMessageReaction_broadcastsAgainForSameMessageAfterCoalesceWindow() throws Exception {
+        MessageReactionRequest request =
+                new MessageReactionRequest("👍", "message-1", "add", "👍");
+
+        when(client.get("user"))
+                .thenReturn(new SocketUser("user-1", "tester", "session-1", "socket-1"));
+        when(mongoTemplate.findAndModify(
+                any(Query.class),
+                any(Update.class),
+                any(FindAndModifyOptions.class),
+                eq(Message.class))).thenReturn(
+                        message("message-1", "room-1", Set.of("user-1")),
+                        message("message-1", "room-1", Set.of("user-1", "user-2")));
+        when(socketIOServer.getRoomOperations("room-1")).thenReturn(roomOperations);
+
+        handler.handleMessageReaction(client, request);
+        verify(roomOperations, timeout(800).times(1))
+                .sendEvent(eq(MESSAGE_REACTION_UPDATE), any());
+
+        Thread.sleep(150);
+        handler.handleMessageReaction(client, request);
+
+        verify(roomOperations, timeout(800).times(2))
+                .sendEvent(eq(MESSAGE_REACTION_UPDATE), any());
+        assertEquals(2, handler.reactionChangesApplied());
+        assertEquals(2, handler.reactionBroadcastEmits());
+        assertEquals(0, handler.coalescedReactionUpdates());
+    }
+
+    @Test
     void handleMessageReaction_removesReactionWithAtomicPull() {
         Message message = Message.builder()
                 .id("message-1")
@@ -218,5 +319,13 @@ class MessageReactionHandlerTest {
 
         verify(client).sendEvent(eq(ERROR), any());
         verify(socketIOServer, never()).getRoomOperations(any());
+    }
+
+    private Message message(String messageId, String roomId, Set<String> users) {
+        return Message.builder()
+                .id(messageId)
+                .roomId(roomId)
+                .reactions(Map.of("👍", users))
+                .build();
     }
 }
