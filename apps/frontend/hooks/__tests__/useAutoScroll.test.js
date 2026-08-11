@@ -105,4 +105,49 @@ describe('useAutoScroll', () => {
 
     expect(container.scrollTo).toHaveBeenCalledTimes(1);
   });
+
+  it('restores scroll position without scrolling to an unchanged last message after prepending history', () => {
+    const currentUserId = 'user-1';
+    const latestMessage = {
+      _id: 'message-latest',
+      sender: currentUserId,
+    };
+    const { result, rerender } = renderHook(
+      ({ messages, isLoadingMessages }) =>
+        useAutoScroll(messages, currentUserId, isLoadingMessages),
+      {
+        initialProps: {
+          messages: [latestMessage],
+          isLoadingMessages: false,
+        },
+      },
+    );
+    const container = createScrollContainer();
+    container.scrollTop = 100;
+    result.current.containerRef.current = container;
+
+    rerender({
+      messages: [latestMessage],
+      isLoadingMessages: true,
+    });
+
+    container.scrollHeight = 1200;
+    rerender({
+      messages: [
+        { _id: 'message-history', sender: 'user-2' },
+        latestMessage,
+      ],
+      isLoadingMessages: true,
+    });
+    rerender({
+      messages: [
+        { _id: 'message-history', sender: 'user-2' },
+        latestMessage,
+      ],
+      isLoadingMessages: false,
+    });
+
+    expect(container.scrollTop).toBe(300);
+    expect(container.scrollTo).not.toHaveBeenCalled();
+  });
 });
