@@ -63,7 +63,7 @@ class MessageReadHandlerTest {
         handler.handleMarkAsRead(client, request);
 
         verify(client).sendEvent(eq(ERROR), any());
-        verify(messageReadStatusService, never()).updateReadStatus(any(), any());
+        verify(messageReadStatusService, never()).updateReadStatus(any(), any(), any());
     }
 
     @Test
@@ -82,7 +82,8 @@ class MessageReadHandlerTest {
 
         handler.handleMarkAsRead(client, request);
 
-        verify(messageReadStatusService).updateReadStatus(List.of("message-1"), "user-1");
+        verify(messageReadStatusService)
+                .updateReadStatus("room-1", List.of("message-1"), "user-1");
         ArgumentCaptor<Object> responseCaptor = ArgumentCaptor.forClass(Object.class);
         verify(roomOperations).sendEvent(eq(MESSAGES_READ), responseCaptor.capture());
         MessagesReadResponse response = (MessagesReadResponse) responseCaptor.getValue();

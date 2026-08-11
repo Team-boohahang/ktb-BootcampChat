@@ -70,7 +70,7 @@ public class MessageReadHandler {
                 return;
             }
             
-            messageReadStatusService.updateReadStatus(data.getMessageIds(), userId);
+            messageReadStatusService.updateReadStatus(roomId, data.getMessageIds(), userId);
 
             MessagesReadResponse response = new MessagesReadResponse(userId, data.getMessageIds());
 
