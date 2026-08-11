@@ -25,7 +25,6 @@ const renderRoomList = () =>
       isRetrying: false,
       setIsRetrying: vi.fn(),
       getRetryDelay: vi.fn(() => 1000),
-      attemptConnection: vi.fn(() => Promise.resolve(true)),
     })
   );
 
