@@ -247,6 +247,7 @@ export const useChatRoomLifecycle = ({
   useEffect(() => {
     const handleBeforeUnload = () => {
       if (socketRef.current?.connected && roomId) {
+        socketClient.flushPendingReads(socketRef.current);
         socketClient.tryLeaveRoom(roomId, socketRef.current);
       }
     };

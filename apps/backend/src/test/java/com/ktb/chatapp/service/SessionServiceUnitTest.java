@@ -124,6 +124,43 @@ class SessionServiceUnitTest {
     }
 
     @Test
+    @DisplayName("세션 검증은 최근 activity면 저장소 갱신을 생략한다")
+    void validateSession_RecentActivity_SkipsSave() {
+        Session session = Session.builder()
+                .userId(USER_ID)
+                .sessionId(SESSION_ID)
+                .createdAt(Instant.now().toEpochMilli())
+                .lastActivity(Instant.now().toEpochMilli())
+                .expiresAt(Instant.now().plusSeconds(SessionService.SESSION_TTL_SEC))
+                .build();
+        when(sessionStore.findByUserId(USER_ID)).thenReturn(Optional.of(session));
+
+        SessionValidationResult result = sessionService.validateSession(USER_ID, SESSION_ID);
+
+        assertThat(result.isValid()).isTrue();
+        verify(sessionStore, never()).save(any(Session.class));
+    }
+
+    @Test
+    @DisplayName("세션 검증은 오래된 activity면 저장소를 갱신한다")
+    void validateSession_StaleActivity_Saves() {
+        Session session = Session.builder()
+                .userId(USER_ID)
+                .sessionId(SESSION_ID)
+                .createdAt(Instant.now().toEpochMilli())
+                .lastActivity(Instant.now().minusSeconds(20).toEpochMilli())
+                .expiresAt(Instant.now().plusSeconds(SessionService.SESSION_TTL_SEC))
+                .build();
+        when(sessionStore.findByUserId(USER_ID)).thenReturn(Optional.of(session));
+        when(sessionStore.save(any(Session.class))).thenAnswer(invocation -> invocation.getArgument(0));
+
+        SessionValidationResult result = sessionService.validateSession(USER_ID, SESSION_ID);
+
+        assertThat(result.isValid()).isTrue();
+        verify(sessionStore).save(any(Session.class));
+    }
+
+    @Test
     @DisplayName("활성 세션 조회 중 저장소 실패는 null로 반환된다")
     void getActiveSession_StoreFailure_ReturnsNull() {
         when(sessionStore.findByUserId(USER_ID)).thenThrow(new IllegalStateException("store down"));

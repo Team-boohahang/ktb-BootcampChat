@@ -22,6 +22,7 @@ vi.mock('../useRoomHandling', () => ({
 vi.mock('@/lib/socket/socketClient', () => ({
   default: {
     subscribeConnectionEvents: vi.fn(() => vi.fn()),
+    flushPendingReads: vi.fn(),
     tryLeaveRoom: vi.fn(),
   },
 }));

@@ -80,7 +80,7 @@ class MessageLoaderIntegrationTest {
         userRepository.save(testUser);
 
         // MessageReadStatusService mock 설정
-        doReturn(true).when(messageReadStatusService)
+        doReturn(0L).when(messageReadStatusService)
                 .updateReadStatus(anyString(), anyList(), anyString());
     }
 

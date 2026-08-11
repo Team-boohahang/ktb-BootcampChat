@@ -6,6 +6,7 @@ import java.time.Instant;
 import java.util.UUID;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.boot.convert.DurationStyle;
 import org.springframework.stereotype.Service;
 
@@ -19,6 +20,9 @@ public class SessionService {
     private final SessionStore sessionStore;
     public static final long SESSION_TTL_SEC = DurationStyle.detectAndParse(SESSION_TTL).getSeconds();
     private static final long SESSION_TIMEOUT = SESSION_TTL_SEC * 1000;
+
+    @Value("${SESSION_ACTIVITY_UPDATE_INTERVAL_MS:${session.activity-update-interval-ms:10000}}")
+    private long activityUpdateIntervalMs = 10_000;
 
     private String generateSessionId() {
         return UUID.randomUUID().toString().replace("-", "");
@@ -94,10 +98,11 @@ public class SessionService {
                 return SessionValidationResult.invalid("SESSION_EXPIRED", "세션이 만료되었습니다.");
             }
 
-            // Update last activity
-            session.setLastActivity(now);
-            session.setExpiresAt(Instant.now().plusSeconds(SESSION_TTL_SEC));
-            session = sessionStore.save(session);
+            if (shouldUpdateActivity(session, now)) {
+                session.setLastActivity(now);
+                session.setExpiresAt(Instant.now().plusSeconds(SESSION_TTL_SEC));
+                session = sessionStore.save(session);
+            }
 
             SessionData sessionData = toSessionData(session);
             return SessionValidationResult.valid(sessionData);
@@ -121,9 +126,12 @@ public class SessionService {
                 return;
             }
 
-            session.setLastActivity(Instant.now().toEpochMilli());
-            session.setExpiresAt(Instant.now().plusSeconds(SESSION_TTL_SEC));
-            sessionStore.save(session);
+            long now = Instant.now().toEpochMilli();
+            if (shouldUpdateActivity(session, now)) {
+                session.setLastActivity(now);
+                session.setExpiresAt(Instant.now().plusSeconds(SESSION_TTL_SEC));
+                sessionStore.save(session);
+            }
             
         } catch (Exception e) {
             log.error("Failed to update session activity for user: {}", userId, e);
@@ -169,6 +177,11 @@ public class SessionService {
             log.error("Get active session error for userId: {}", userId, e);
             return null;
         }
+    }
+
+    private boolean shouldUpdateActivity(Session session, long now) {
+        return activityUpdateIntervalMs <= 0
+                || now - session.getLastActivity() >= activityUpdateIntervalMs;
     }
     
 }

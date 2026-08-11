@@ -99,7 +99,7 @@ public class MessageLoader {
 
         stepStartedAt = System.nanoTime();
 
-        boolean readStatusUpdated =
+        long readStatusModifiedCount =
                 messageReadStatusService.updateReadStatus(
                         roomId,
                         messageIds,
@@ -108,7 +108,7 @@ public class MessageLoader {
 
         readStatusUpdateMs = elapsedMillis(stepStartedAt);
 
-        if (!readStatusUpdated) {
+        if (readStatusModifiedCount < 0) {
             log.warn(
                 "Failed to update read status while loading messages for room {}",
                 roomId
