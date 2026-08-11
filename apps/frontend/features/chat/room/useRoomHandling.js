@@ -77,22 +77,22 @@ export const useRoomHandling = ({
     }
 
     const handlers = createRoomEventHandlers({
-        mountedRef,
-        messageProcessingRef,
-        processedMessageIds,
-        initialLoadCompletedRef,
-        processMessages,
-        setRoom,
-        setMessages,
-        setLoadingMessages,
-        setError,
-        setHasMoreMessages,
-        cleanup,
-        logout,
-        onReplace,
-        handleReactionUpdate,
-        showRejectedMessage: Toast.error.bind(Toast),
-      });
+      mountedRef,
+      messageProcessingRef,
+      processedMessageIds,
+      initialLoadCompletedRef,
+      processMessages,
+      setRoom,
+      setMessages,
+      setLoadingMessages,
+      setError,
+      setHasMoreMessages,
+      cleanup,
+      logout,
+      onReplace,
+      handleReactionUpdate,
+      showRejectedMessage: Toast.error.bind(Toast),
+    });
     const unsubscribe = socketClient.subscribeRoomEvents(
       socketRef.current,
       handlers
@@ -350,7 +350,10 @@ export const useRoomHandling = ({
           fetchRoomData(roomId),
         ]);
 
-        if (socketResult.status === 'rejected' || roomDataResult.status === 'rejected') {
+        if (
+          socketResult.status === 'rejected' ||
+          roomDataResult.status === 'rejected'
+        ) {
           if (socketResult.status === 'fulfilled') {
             socketResult.value.disconnect();
           }
@@ -359,6 +362,13 @@ export const useRoomHandling = ({
             ? socketResult.reason
             : roomDataResult.reason;
         }
+
+        if (!mountedRef.current) {
+          socketResult.value.disconnect();
+          return;
+        }
+
+        attachSocket(socketResult.value);
 
         attachSocket(socketResult.value);
         const roomData = roomDataResult.value;
@@ -460,7 +470,7 @@ export const useRoomHandling = ({
       }
 
       // 언마운트 경로는 attachSocket 을 쓰지 않는다. 사라지는 컴포넌트에
-       // 소켓 교체를 통지할 구독자가 없다.
+      // 소켓 교체를 통지할 구독자가 없다.
       if (socketRef.current) {
         socketRef.current.disconnect();
         socketRef.current = null;
