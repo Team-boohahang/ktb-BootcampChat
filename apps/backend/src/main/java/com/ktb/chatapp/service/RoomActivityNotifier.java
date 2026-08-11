@@ -1,6 +1,7 @@
 package com.ktb.chatapp.service;
 
 import com.ktb.chatapp.event.RoomActivityEvent;
+import com.ktb.chatapp.model.Message;
 import jakarta.annotation.PreDestroy;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
@@ -16,7 +17,7 @@ import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.stereotype.Component;
 
 /**
- * 새 메시지가 저장되면 채팅방 목록의 활성도 지표를 갱신하도록 알린다.
+ * 새 메시지를 최근 메시지 집계에 기록하고 채팅방 활성도 이벤트를 debounce하여 발행한다.
  */
 @Slf4j
 @Component
@@ -33,11 +34,7 @@ public class RoomActivityNotifier {
             RecentMessageCounter recentMessageCounter,
             ApplicationEventPublisher eventPublisher,
             @Value("${room.activity.debounce-ms:1000}") long debounceMillis) {
-        this(
-                recentMessageCounter,
-                eventPublisher,
-                createScheduler(),
-                debounceMillis);
+        this(recentMessageCounter, eventPublisher, createScheduler(), debounceMillis);
     }
 
     RoomActivityNotifier(
@@ -51,9 +48,16 @@ public class RoomActivityNotifier {
         this.debounceMillis = debounceMillis;
     }
 
-    public void notifyMessageStored(String roomId) {
-        if (roomId == null) {
+    public void notifyMessageStored(Message savedMessage) {
+        if (savedMessage == null || savedMessage.getRoomId() == null) {
             return;
+        }
+
+        String roomId = savedMessage.getRoomId();
+        try {
+            recentMessageCounter.recordMessage(savedMessage);
+        } catch (Exception e) {
+            log.error("최근 메시지 Redis 기록 실패: roomId={}", roomId, e);
         }
 
         if (pendingRooms.putIfAbsent(roomId, Boolean.TRUE) != null) {
@@ -82,7 +86,9 @@ public class RoomActivityNotifier {
     private static ScheduledExecutorService createScheduler() {
         AtomicInteger threadIndex = new AtomicInteger();
         ThreadFactory threadFactory = runnable -> {
-            Thread thread = new Thread(runnable, "room-activity-notifier-" + threadIndex.incrementAndGet());
+            Thread thread = new Thread(
+                    runnable,
+                    "room-activity-notifier-" + threadIndex.incrementAndGet());
             thread.setDaemon(true);
             return thread;
         };

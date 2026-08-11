@@ -163,7 +163,7 @@ class ChatMessageHandlerTest {
         ArgumentCaptor<MessageResponse> payloadCaptor = ArgumentCaptor.forClass(MessageResponse.class);
         verify(roomOperations).sendEvent(eq(MESSAGE), payloadCaptor.capture());
         verify(client, never()).sendEvent(eq(MESSAGE), any(MessageResponse.class));
-        verify(roomActivityNotifier).notifyMessageStored("room-1");
+        verify(roomActivityNotifier).notifyMessageStored(any(Message.class));
         org.junit.jupiter.api.Assertions.assertEquals("message-1", payloadCaptor.getValue().getId());
         org.junit.jupiter.api.Assertions.assertEquals("hello", payloadCaptor.getValue().getContent());
     }
