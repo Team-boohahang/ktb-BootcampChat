@@ -144,4 +144,15 @@ describe('ChatRoomsView', () => {
 
     expect(screen.queryByTestId('refresh-rooms-button')).toBeNull();
   });
+
+  it('reserves the room list height before room data is available', () => {
+    render(<ChatRoomsView router={{ push: vi.fn() }} />);
+
+    const contentSlot = screen.getByTestId('room-list-content-slot');
+
+    expect(contentSlot).toHaveStyle({
+      height: '430px',
+      minHeight: '430px',
+    });
+  });
 });
