@@ -8,11 +8,13 @@ import com.ktb.chatapp.model.User;
 import com.ktb.chatapp.repository.RoomRepository;
 import com.ktb.chatapp.repository.UserRepository;
 import java.time.LocalDateTime;
-import java.util.Comparator;
 import java.util.HashMap;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.Set;
+import java.util.function.Function;
 import java.util.stream.Collectors;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -34,16 +36,16 @@ public class RoomService {
     public RoomsResponse getAllRooms(String name) {
 
         try {
-            // 전체 방을 조회해 최신순으로 정렬한다
-            List<Room> rooms = roomRepository.findAll();
+            List<Room> rooms = roomRepository.findAllForRoomList();
             Map<String, Integer> recentMessageCounts = recentMessageCounter.countRecentMessages(
                     rooms.stream().map(Room::getId).toList());
+            Map<String, User> usersById = findRoomUsersById(rooms);
             List<RoomResponse> roomResponses = rooms.stream()
                 .map(room -> mapToRoomResponse(
-                        room, name, recentMessageCounts.getOrDefault(room.getId(), 0)))
-                .sorted(Comparator.comparing(
-                    RoomResponse::getCreatedAtDateTime,
-                    Comparator.nullsLast(Comparator.reverseOrder())))
+                        room,
+                        name,
+                        recentMessageCounts.getOrDefault(room.getId(), 0),
+                        usersById))
                 .collect(Collectors.toList());
 
             PageMetadata metadata = PageMetadata.builder()
@@ -222,5 +224,65 @@ public class RoomService {
             .isCreator(creator != null && creator.getId().equals(name))
             .recentMessageCount(recentMessageCount)
             .build();
+    }
+
+    private RoomResponse mapToRoomResponse(
+            Room room,
+            String name,
+            int recentMessageCount,
+            Map<String, User> usersById) {
+        if (room == null) return null;
+
+        User creator = room.getCreator() != null ? usersById.get(room.getCreator()) : null;
+        List<User> participants = room.getParticipantIds().stream()
+            .map(usersById::get)
+            .filter(user -> user != null)
+            .toList();
+
+        return RoomResponse.builder()
+            .id(room.getId())
+            .name(room.getName() != null ? room.getName() : "제목 없음")
+            .hasPassword(room.isHasPassword())
+            .creator(creator != null ? UserResponse.builder()
+                .id(creator.getId())
+                .name(creator.getName() != null ? creator.getName() : "알 수 없음")
+                .email(creator.getEmail() != null ? creator.getEmail() : "")
+                .build() : null)
+            .participants(participants.stream()
+                .filter(p -> p.getId() != null)
+                .map(p -> UserResponse.builder()
+                    .id(p.getId())
+                    .name(p.getName() != null ? p.getName() : "알 수 없음")
+                    .email(p.getEmail() != null ? p.getEmail() : "")
+                    .build())
+                .collect(Collectors.toList()))
+            .createdAtDateTime(room.getCreatedAt())
+            .isCreator(creator != null && creator.getId().equals(name))
+            .recentMessageCount(recentMessageCount)
+            .build();
+    }
+
+    private Map<String, User> findRoomUsersById(List<Room> rooms) {
+        Set<String> userIds = new LinkedHashSet<>();
+        for (Room room : rooms) {
+            if (room.getCreator() != null) {
+                userIds.add(room.getCreator());
+            }
+            if (room.getParticipantIds() != null) {
+                userIds.addAll(room.getParticipantIds());
+            }
+        }
+
+        if (userIds.isEmpty()) {
+            return Map.of();
+        }
+
+        return userRepository.findAllById(userIds).stream()
+            .filter(user -> user != null && user.getId() != null)
+            .collect(Collectors.toMap(
+                User::getId,
+                Function.identity(),
+                (existing, ignored) -> existing,
+                HashMap::new));
     }
 }
