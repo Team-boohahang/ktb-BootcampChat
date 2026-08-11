@@ -22,6 +22,7 @@ const Register = () => {
     confirmPassword: ''
   });
   const [error, setError] = useState(null);
+  const [navigationError, setNavigationError] = useState(null);
   const [success, setSuccess] = useState(false);
   const [loading, setLoading] = useState(false);
   const router = useRouter();
@@ -46,23 +47,35 @@ const Register = () => {
 
     setLoading(true);
     setError(null);
+    setNavigationError(null);
     setSuccess(false);
 
     try {
       const { name, email, password } = formData;
       await registerContext({ name, email, password });
-      
-      setSuccess(true);
-      setLoading(false);
-
-      // 지연된 라우팅은 다음 로그인 이동과 겹쳐 기존 navigation을 취소할 수 있다.
-      // 가입 완료 시 로그인 화면으로 즉시 전환해 이동 순서를 결정적으로 유지한다.
-      await router.replace('/');
     } catch (err) {
       setError(err.message || '회원가입 처리 중 오류가 발생했습니다.');
       setLoading(false);
+      return;
+    }
+
+    setSuccess(true);
+
+    try {
+      const navigated = await router.replace('/');
+      if (!navigated) {
+        throw new Error('Navigation cancelled');
+      }
+    } catch {
+      setSuccess(false);
+      setNavigationError('회원가입은 완료됐지만 로그인 화면으로 이동하지 못했습니다. 아래 로그인 버튼을 눌러주세요.');
+    } finally {
+      // 가입 성공 후에는 라우팅이 성공하거나 실패로 종료될 때까지 폼을 잠근다.
+      setLoading(false);
     }
   };
+
+  const isRegistrationComplete = success || Boolean(navigationError);
 
   return (
     <div className="min-h-screen flex items-center justify-center p-[var(--vapor-space-300)] bg-[var(--vapor-color-background)]">
@@ -89,6 +102,15 @@ const Register = () => {
           </Callout.Root>
         )}
 
+        {navigationError && (
+          <Callout.Root colorPalette="warning" data-testid="register-navigation-error-message">
+            <Callout.Icon>
+              <ErrorCircleIcon />
+            </Callout.Icon>
+            {navigationError}
+          </Callout.Root>
+        )}
+
         {success && (
           <Callout.Root colorPalette="success" data-testid="register-success-message">
             <Callout.Icon>
@@ -112,7 +134,7 @@ const Register = () => {
                   size="lg"
                   type="text"
                   required
-                  disabled={loading}
+                  disabled={loading || isRegistrationComplete}
                   value={formData.name}
                   onValueChange={(value) => setFormData(prev => ({ ...prev, name: value }))}
                   placeholder="이름을 입력하세요"
@@ -134,7 +156,7 @@ const Register = () => {
                   size="lg"
                   type="email"
                   required
-                  disabled={loading}
+                  disabled={loading || isRegistrationComplete}
                   value={formData.email}
                   onValueChange={(value) => setFormData(prev => ({ ...prev, email: value }))}
                   placeholder="이메일을 입력하세요"
@@ -157,7 +179,7 @@ const Register = () => {
                   size="lg"
                   type="password"
                   required
-                  disabled={loading}
+                  disabled={loading || isRegistrationComplete}
                   value={formData.password}
                   onValueChange={(value) => setFormData(prev => ({ ...prev, password: value }))}
                   placeholder="비밀번호를 입력하세요"
@@ -182,7 +204,7 @@ const Register = () => {
                   size="lg"
                   type="password"
                   required
-                  disabled={loading}
+                  disabled={loading || isRegistrationComplete}
                   value={formData.confirmPassword}
                   onValueChange={(value) => setFormData(prev => ({ ...prev, confirmPassword: value }))}
                   placeholder="비밀번호를 다시 입력하세요"
@@ -196,7 +218,7 @@ const Register = () => {
           <Button
             type="submit"
             size="lg"
-            disabled={loading}
+            disabled={loading || isRegistrationComplete}
             data-testid="register-submit-button"
           >
             {loading ? '회원가입 중...' : '회원가입'}
